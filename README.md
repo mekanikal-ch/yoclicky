@@ -9,12 +9,6 @@
   Runs on <b>your own Claude subscription</b>, so there's no extra subscription to pay.
 </p>
 
-
-
-https://github.com/user-attachments/assets/74c5427b-ddbb-4436-b680-4bc5aa3d568c
-
-
-
 <p align="center">
   <a href="https://github.com/mekanikal-ch/yoclicky/releases/latest"><b>Download for macOS</b></a>
   ·
@@ -24,6 +18,12 @@ https://github.com/user-attachments/assets/74c5427b-ddbb-4436-b680-4bc5aa3d568c
   ·
   <a href="#build-from-source">Build from source</a>
 </p>
+
+https://github.com/user-attachments/assets/74c5427b-ddbb-4436-b680-4bc5aa3d568c
+
+
+
+
 
 ---
 

@@ -4,6 +4,12 @@
 <dict>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>YoClicky reads the document you have open when you ask about it, so it can answer about the whole file, not just what's on screen.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>YoClicky reads the document you have open when you ask about it, so it can answer about the whole file, not just what's on screen.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>YoClicky reads the document you have open when you ask about it, so it can answer about the whole file, not just what's on screen.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>YoClicky uses your microphone so you can talk to it</string>
 	<key>NSScreenCaptureUsageDescription</key>

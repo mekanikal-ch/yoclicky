@@ -40,7 +40,8 @@ enum BuddyPushToTalkShortcut {
             for: shortcutEventType,
             keyCode: event.keyCode,
             modifierFlags: event.modifierFlags.intersection(.deviceIndependentFlagsMask),
-            wasShortcutPreviouslyPressed: wasShortcutPreviouslyPressed
+            wasShortcutPreviouslyPressed: wasShortcutPreviouslyPressed,
+            shortcut: currentShortcut
         )
     }
 
@@ -48,7 +49,8 @@ enum BuddyPushToTalkShortcut {
         for eventType: CGEventType,
         keyCode: UInt16,
         modifierFlagsRawValue: UInt64,
-        wasShortcutPreviouslyPressed: Bool
+        wasShortcutPreviouslyPressed: Bool,
+        shortcut: PushToTalkShortcut = currentShortcut
     ) -> ShortcutTransition {
         guard let shortcutEventType = shortcutEventType(for: eventType) else { return .none }
 
@@ -57,7 +59,8 @@ enum BuddyPushToTalkShortcut {
             keyCode: keyCode,
             modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(modifierFlagsRawValue))
                 .intersection(.deviceIndependentFlagsMask),
-            wasShortcutPreviouslyPressed: wasShortcutPreviouslyPressed
+            wasShortcutPreviouslyPressed: wasShortcutPreviouslyPressed,
+            shortcut: shortcut
         )
     }
 
@@ -91,9 +94,9 @@ enum BuddyPushToTalkShortcut {
         for shortcutEventType: ShortcutEventType,
         keyCode: UInt16,
         modifierFlags: NSEvent.ModifierFlags,
-        wasShortcutPreviouslyPressed: Bool
+        wasShortcutPreviouslyPressed: Bool,
+        shortcut: PushToTalkShortcut
     ) -> ShortcutTransition {
-        let shortcut = currentShortcut
         let requiredModifierFlags = shortcut.modifierFlags
 
         guard let shortcutKeyCode = shortcut.keyCode else {

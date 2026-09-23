@@ -28,6 +28,13 @@ struct PushToTalkShortcut: Codable, Equatable {
         keyLabel: nil
     )
 
+    /// Default hold-to-dictate shortcut.
+    static let defaultDictation = PushToTalkShortcut(
+        modifierFlagsRawValue: NSEvent.ModifierFlags([.control, .shift]).rawValue,
+        keyCode: nil,
+        keyLabel: nil
+    )
+
     static let supportedModifierFlags: NSEvent.ModifierFlags = [.control, .option, .shift, .command, .function]
 
     var modifierFlags: NSEvent.ModifierFlags {
@@ -121,9 +128,28 @@ enum ClickySettings {
     static let defaultCursorColorHex = "#3380FF"
     static let pushToTalkShortcutKey = "pushToTalkShortcut"
     static let doubleTapKeyKey = "textChatDoubleTapKey"
+    static let dictationShortcutKey = "dictationShortcut"
 
     /// Cached so the global event tap doesn't decode JSON on every key event.
     private static var cachedPushToTalkShortcut: PushToTalkShortcut?
+    private static var cachedDictationShortcut: PushToTalkShortcut?
+
+    /// Hold to dictate into the focused text field (no AI involved).
+    static var dictationShortcut: PushToTalkShortcut {
+        get {
+            if let cachedDictationShortcut { return cachedDictationShortcut }
+            let storedShortcut = decodePushToTalkShortcut(
+                UserDefaults.standard.string(forKey: dictationShortcutKey),
+                fallback: .defaultDictation
+            )
+            cachedDictationShortcut = storedShortcut
+            return storedShortcut
+        }
+        set {
+            cachedDictationShortcut = newValue
+            UserDefaults.standard.set(encodePushToTalkShortcut(newValue), forKey: dictationShortcutKey)
+        }
+    }
 
     static var pushToTalkShortcut: PushToTalkShortcut {
         get {
@@ -147,10 +173,10 @@ enum ClickySettings {
         }
     }
 
-    static func decodePushToTalkShortcut(_ jsonString: String?) -> PushToTalkShortcut {
+    static func decodePushToTalkShortcut(_ jsonString: String?, fallback: PushToTalkShortcut = .default) -> PushToTalkShortcut {
         guard let jsonData = jsonString?.data(using: .utf8),
               let decodedShortcut = try? JSONDecoder().decode(PushToTalkShortcut.self, from: jsonData) else {
-            return .default
+            return fallback
         }
         return decodedShortcut
     }
@@ -272,9 +298,20 @@ extension ClickySettings {
     static let customInstructionsKey = "customInstructions"
     static let screenshotModeKey = "screenshotMode"
     static let historyLengthKey = "conversationHistoryLength"
+    static let documentReadingKey = "readOpenDocument"
+    static let memoryEnabledKey = "memoryEnabled"
 
-    /// AVSpeechUtterance rate; 0.5 is the system default.
-    static let defaultSpeechRate = 0.5
+    static var documentReadingEnabled: Bool {
+        UserDefaults.standard.object(forKey: documentReadingKey) as? Bool ?? true
+    }
+
+    static var memoryEnabled: Bool {
+        UserDefaults.standard.object(forKey: memoryEnabledKey) as? Bool ?? true
+    }
+
+    /// AVSpeechUtterance rate. 0.5 is Apple's default, but it made voices like
+    /// Ava rush the end of each word; 0.44 sounds natural.
+    static let defaultSpeechRate = 0.44
     static let defaultHistoryLength = 10
 
     static var language: AssistantLanguage {
@@ -315,6 +352,7 @@ extension ClickySettings {
         cursorColorKey, pushToTalkShortcutKey, doubleTapKeyKey, DS.Glass.windowOpacityKey,
         languageKey, ttsVoiceIdentifierKey, speechRateKey, speakRepliesKey, onDeviceRecognitionKey,
         soundsEnabledKey, customInstructionsKey, screenshotModeKey, historyLengthKey,
+        dictationShortcutKey, documentReadingKey, memoryEnabledKey,
         "isCavemanMode", "selectedClaudeModel", AIProviderSettings.selectedProviderKey, "isClickyCursorEnabled"
     ]
 
@@ -323,6 +361,7 @@ extension ClickySettings {
             UserDefaults.standard.removeObject(forKey: preferenceKey)
         }
         pushToTalkShortcut = .default
+        dictationShortcut = .defaultDictation
     }
 }
 

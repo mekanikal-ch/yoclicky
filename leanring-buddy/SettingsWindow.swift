@@ -53,6 +53,7 @@ final class SettingsWindowManager {
 final class ShortcutRecorder: ObservableObject {
     enum Target {
         case pushToTalk
+        case dictation
         case textChatDoubleTap
     }
 
@@ -71,9 +72,9 @@ final class ShortcutRecorder: ObservableObject {
         stopRecording()
         recordingTarget = target
         peakModifierFlags = []
-        hintText = target == .pushToTalk
-            ? "hold your modifier keys and release, or press modifiers + a key. esc cancels."
-            : "tap the modifier key to double-tap (control, option, command, shift or fn). esc cancels."
+        hintText = target == .textChatDoubleTap
+            ? "tap the modifier key to double-tap (control, option, command, shift or fn). esc cancels."
+            : "hold your modifier keys and release, or press modifiers + a key. esc cancels."
         globalShortcutMonitor.isPaused = true
 
         localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
@@ -102,7 +103,7 @@ final class ShortcutRecorder: ObservableObject {
         }
 
         switch recordingTarget {
-        case .pushToTalk:
+        case .pushToTalk, .dictation:
             recordPushToTalk(event: event, modifierFlags: modifierFlags)
         case .textChatDoubleTap:
             recordDoubleTapKey(event: event, modifierFlags: modifierFlags)
@@ -127,12 +128,11 @@ final class ShortcutRecorder: ObservableObject {
                 return
             }
 
-            ClickySettings.pushToTalkShortcut = PushToTalkShortcut(
+            saveHoldShortcut(PushToTalkShortcut(
                 modifierFlagsRawValue: shortcutModifierFlags.rawValue,
                 keyCode: event.keyCode,
                 keyLabel: PushToTalkShortcut.keyLabel(for: event.keyCode, characters: event.charactersIgnoringModifiers)
-            )
-            stopRecording()
+            ))
             return
         }
 
@@ -149,16 +149,31 @@ final class ShortcutRecorder: ObservableObject {
         // A single modifier would fire on every ordinary shortcut that uses it.
         guard !peakModifierFlags.isEmpty else { return }
         if PushToTalkShortcut.modifierNames(for: peakModifierFlags).count >= 2 {
-            ClickySettings.pushToTalkShortcut = PushToTalkShortcut(
+            saveHoldShortcut(PushToTalkShortcut(
                 modifierFlagsRawValue: peakModifierFlags.rawValue,
                 keyCode: nil,
                 keyLabel: nil
-            )
-            stopRecording()
+            ))
         } else {
             hintText = "use two or more modifier keys, or a modifier plus a key."
             peakModifierFlags = []
         }
+    }
+
+    /// Saves a recorded hold shortcut to whichever setting is being recorded,
+    /// refusing one that's identical to the other hold shortcut.
+    private func saveHoldShortcut(_ shortcut: PushToTalkShortcut) {
+        let otherShortcut = recordingTarget == .dictation ? ClickySettings.pushToTalkShortcut : ClickySettings.dictationShortcut
+        guard shortcut != otherShortcut else {
+            hintText = "that's already the \(recordingTarget == .dictation ? "push to talk" : "dictation") shortcut. pick another."
+            return
+        }
+        if recordingTarget == .dictation {
+            ClickySettings.dictationShortcut = shortcut
+        } else {
+            ClickySettings.pushToTalkShortcut = shortcut
+        }
+        stopRecording()
     }
 
     private func recordDoubleTapKey(event: NSEvent, modifierFlags: NSEvent.ModifierFlags) {
@@ -240,6 +255,10 @@ struct SettingsView: View {
     @AppStorage(ClickySettings.customInstructionsKey) private var customInstructions = ""
     @AppStorage(ClickySettings.screenshotModeKey) private var screenshotModeRawValue = ScreenshotMode.allScreens.rawValue
     @AppStorage(ClickySettings.historyLengthKey) private var historyLength = ClickySettings.defaultHistoryLength
+    @AppStorage(ClickySettings.dictationShortcutKey) private var dictationShortcutJSON = ""
+    @AppStorage(ClickySettings.documentReadingKey) private var documentReadingEnabled = true
+    @AppStorage(ClickySettings.memoryEnabledKey) private var memoryEnabled = true
+    @ObservedObject private var memoryStore = MemoryStore.shared
 
     @State private var voicePreviewSpeaker = SystemTTSClient()
     @State private var isShowingResetConfirmation = false
@@ -607,6 +626,14 @@ struct SettingsView: View {
                 )
             }
 
+            settingsRow(title: "Dictation", subtitle: "Hold, speak, release: your words are typed where your cursor is. No AI, no tokens.") {
+                shortcutButton(
+                    label: ClickySettings.decodePushToTalkShortcut(dictationShortcutJSON, fallback: .defaultDictation).displayText,
+                    target: .dictation,
+                    onReset: { ClickySettings.dictationShortcut = .defaultDictation }
+                )
+            }
+
             settingsRow(title: "Text chat", subtitle: "Double-tap this key to open or close the chat.") {
                 HStack(spacing: 6) {
                     shortcutButton(
@@ -721,6 +748,13 @@ struct SettingsView: View {
                         .frame(minWidth: 20, alignment: .trailing)
                 }
             }
+            settingsRow(title: "Read open document", subtitle: documentReadingEnabled
+                ? "On: when you ask about \"this document\", \"the PDF\", \"summarize\"…, YoClicky reads the whole file open in your app (Preview, TextEdit, Xcode, Word…)."
+                : "Off: YoClicky only sees what's visible on screen.") {
+                Toggle("", isOn: $documentReadingEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
         }
     }
 
@@ -792,7 +826,7 @@ struct SettingsView: View {
                         .toggleStyle(.switch)
                         .labelsHidden()
                 }
-                settingsRow(title: "Voice", subtitle: "Download better voices in System Settings > Accessibility > Spoken Content.") {
+                settingsRow(title: "Voice", subtitle: "Download better voices in System Settings > Accessibility > System Voice.") {
                     HStack(spacing: 8) {
                         Picker("", selection: $ttsVoiceIdentifier) {
                             Text("Best available").tag("")
@@ -810,7 +844,17 @@ struct SettingsView: View {
                         .help("Preview \(currentVoice?.name ?? "voice")")
                     }
                 }
-                settingsRow(title: "Speed", subtitle: speechRate < 0.45 ? "Slower than normal." : speechRate > 0.55 ? "Faster than normal." : "Normal speed.") {
+                settingsRow(
+                    title: "More voices",
+                    subtitle: "Apple's Premium and Enhanced voices sound best. Download them in System Settings, then pick one above."
+                ) {
+                    Button("Get More Voices…") {
+                        let spokenContentSettingsURL = URL(string: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?SpokenContent")!
+                        NSWorkspace.shared.open(spokenContentSettingsURL)
+                    }
+                    .buttonStyle(GlassButtonStyle())
+                }
+                settingsRow(title: "Speed", subtitle: speechRate < 0.40 ? "Slower than normal." : speechRate > 0.48 ? "Faster than normal." : "Normal speed.") {
                     HStack(spacing: 8) {
                         Image(systemName: "tortoise.fill")
                             .foregroundColor(DS.Colors.textTertiary)
@@ -851,10 +895,55 @@ struct SettingsView: View {
                     privacyLine("keyboard", "Only when you hold the talk shortcut or send a chat message. Nothing runs in the background.")
                     privacyLine("waveform", "Your voice is turned into text by Apple speech recognition, on this Mac when on-device is on.")
                     privacyLine("photo", "A screenshot (per Settings > AI > Screenshots) and your text go to Claude through Claude Code, using your Claude account.")
-                    privacyLine("externaldrive", "Screenshots aren't saved. Settings and the current conversation stay on this Mac only.")
+                    privacyLine("doc.text", "When you ask about the open document, its text is sent too (Settings > AI > Read open document).")
+                    privacyLine("externaldrive", "Screenshots aren't saved. Settings, memories and the current conversation stay on this Mac only.")
                     privacyLine("eye.slash", "No analytics, no tracking, no YoClicky servers.")
                 }
                 .glassCard()
+            }
+
+            settingsSection(title: "MEMORY") {
+                settingsRow(title: "Remember me between sessions", subtitle: memoryEnabled
+                    ? "On: YoClicky keeps short facts you tell it (your studies, preferences…) and uses them later."
+                    : "Off: nothing new is remembered and saved facts aren't sent.") {
+                    Toggle("", isOn: $memoryEnabled)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+
+                if memoryStore.memories.isEmpty {
+                    Text("Nothing remembered yet. Try saying \"remember that I study at ETH\".")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.Colors.textTertiary)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(memoryStore.memories) { memory in
+                            HStack(spacing: 8) {
+                                Text(memory.text)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(DS.Colors.textPrimary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Button(action: { memoryStore.delete(memory) }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(DS.Colors.textTertiary)
+                                }
+                                .buttonStyle(.plain)
+                                .pointerCursor()
+                                .help("Forget this")
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .glassCard()
+
+                    HStack {
+                        Spacer()
+                        Button("Forget Everything") { memoryStore.deleteAll() }
+                            .buttonStyle(GlassButtonStyle())
+                    }
+                }
             }
 
             settingsSection(title: "CONVERSATION") {

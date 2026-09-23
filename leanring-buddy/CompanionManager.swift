@@ -44,11 +44,8 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - Onboarding Video State (shared across all screen overlays)
 
-    @Published var onboardingVideoPlayer: AVPlayer?
-    @Published var showOnboardingVideo: Bool = false
-    @Published var onboardingVideoOpacity: Double = 0.0
-    private var onboardingVideoEndObserver: NSObjectProtocol?
-    private var onboardingDemoTimeObserver: Any?
+    /// True while the first-launch tour runs; shortcuts are ignored meanwhile.
+    @Published private(set) var isOnboardingTourRunning: Bool = false
 
     // MARK: - Onboarding Prompt Bubble
 
@@ -56,11 +53,6 @@ final class CompanionManager: ObservableObject {
     @Published var onboardingPromptText: String = ""
     @Published var onboardingPromptOpacity: Double = 0.0
     @Published var showOnboardingPrompt: Bool = false
-
-    // MARK: - Onboarding Music
-
-    private var onboardingMusicPlayer: AVAudioPlayer?
-    private var onboardingMusicFadeTimer: Timer?
 
     let buddyDictationManager = BuddyDictationManager()
     let globalPushToTalkShortcutMonitor = GlobalPushToTalkShortcutMonitor()
@@ -89,6 +81,9 @@ final class CompanionManager: ObservableObject {
     private var currentResponseTask: Task<Void, Never>?
 
     private var shortcutTransitionCancellable: AnyCancellable?
+    private var dictationShortcutCancellable: AnyCancellable?
+    /// Last app the user was in (not YoClicky), for reading its open document.
+    private let frontmostApplicationTracker = FrontmostApplicationTracker()
     private var doubleTapControlCancellable: AnyCancellable?
 
     // MARK: - Text Chat
@@ -142,7 +137,10 @@ final class CompanionManager: ObservableObject {
     /// Updates the in-progress assistant reply in the chat, hiding any partial [POINT...] tag.
     private func updatePendingTextChatReply(text: String, isPending: Bool, isError: Bool = false) {
         guard let pendingIndex = textChatMessages.lastIndex(where: { $0.role == .assistant && $0.isPending }) else { return }
-        let visibleText = text.components(separatedBy: "[POINT").first ?? text
+        // Hide [REMEMBER: ...] and [POINT...] tags, including half-streamed ones.
+        var visibleText = MemoryStore.extractRememberTags(from: text).cleanedText
+        visibleText = visibleText.components(separatedBy: "[POINT").first ?? visibleText
+        visibleText = visibleText.components(separatedBy: "[REMEMBER").first ?? visibleText
         textChatMessages[pendingIndex].text = visibleText.trimmingCharacters(in: .whitespacesAndNewlines)
         textChatMessages[pendingIndex].isPending = isPending
         textChatMessages[pendingIndex].isError = isError
@@ -232,18 +230,6 @@ final class CompanionManager: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "hasCompletedOnboarding") }
     }
 
-    /// Whether the user has submitted their email during onboarding.
-    @Published var hasSubmittedEmail: Bool = UserDefaults.standard.bool(forKey: "hasSubmittedEmail")
-
-    /// Submits the user's email to FormSpark and identifies them in PostHog.
-    func submitEmail(_ email: String) {
-        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedEmail.isEmpty else { return }
-
-        hasSubmittedEmail = true
-        UserDefaults.standard.set(true, forKey: "hasSubmittedEmail")
-        // Local fork: the email is no longer sent to PostHog or FormSpark.
-    }
 
     func start() {
         refreshAllPermissions()
@@ -252,6 +238,7 @@ final class CompanionManager: ObservableObject {
         bindVoiceStateObservation()
         bindAudioPowerLevel()
         bindShortcutTransitions()
+        frontmostApplicationTracker.start()
         prewarmAIClient()
 
         // If the user already completed onboarding AND all permissions are
@@ -279,77 +266,21 @@ final class CompanionManager: ObservableObject {
 
         ClickyAnalytics.trackOnboardingStarted()
 
-        // Play Besaid theme at 60% volume, fade out after 1m 30s
-        startOnboardingMusic()
-
         // Show the overlay for the first time — isFirstAppearance triggers
-        // the welcome animation and onboarding video
+        // the welcome animation, followed by the built-in tour
         overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
         isOverlayVisible = true
     }
 
-    /// Replays the onboarding experience from the "Watch Onboarding Again"
-    /// footer link. Same flow as triggerOnboarding but the cursor overlay
-    /// is already visible so we just restart the welcome animation and video.
+    /// Replays the welcome animation and tour. Same flow as triggerOnboarding,
+    /// but the cursor overlay is already visible.
     func replayOnboarding() {
         NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
         ClickyAnalytics.trackOnboardingReplayed()
-        startOnboardingMusic()
         // Tear down any existing overlays and recreate with isFirstAppearance = true
         overlayWindowManager.hasShownOverlayBefore = false
         overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
         isOverlayVisible = true
-    }
-
-    private func stopOnboardingMusic() {
-        onboardingMusicFadeTimer?.invalidate()
-        onboardingMusicFadeTimer = nil
-        onboardingMusicPlayer?.stop()
-        onboardingMusicPlayer = nil
-    }
-
-    private func startOnboardingMusic() {
-        stopOnboardingMusic()
-        guard let musicURL = Bundle.main.url(forResource: "ff", withExtension: "mp3") else {
-            print("⚠️ Clicky: ff.mp3 not found in bundle")
-            return
-        }
-
-        do {
-            let player = try AVAudioPlayer(contentsOf: musicURL)
-            player.volume = 0.3
-            player.play()
-            self.onboardingMusicPlayer = player
-
-            // After 1m 30s, fade the music out over 3s
-            onboardingMusicFadeTimer = Timer.scheduledTimer(withTimeInterval: 90.0, repeats: false) { [weak self] _ in
-                self?.fadeOutOnboardingMusic()
-            }
-        } catch {
-            print("⚠️ Clicky: Failed to play onboarding music: \(error)")
-        }
-    }
-
-    private func fadeOutOnboardingMusic() {
-        guard let player = onboardingMusicPlayer else { return }
-
-        let fadeSteps = 30
-        let fadeDuration: Double = 3.0
-        let stepInterval = fadeDuration / Double(fadeSteps)
-        let volumeDecrement = player.volume / Float(fadeSteps)
-        var stepsRemaining = fadeSteps
-
-        onboardingMusicFadeTimer = Timer.scheduledTimer(withTimeInterval: stepInterval, repeats: true) { [weak self] timer in
-            stepsRemaining -= 1
-            player.volume -= volumeDecrement
-
-            if stepsRemaining <= 0 {
-                timer.invalidate()
-                player.stop()
-                self?.onboardingMusicPlayer = nil
-                self?.onboardingMusicFadeTimer = nil
-            }
-        }
     }
 
     func clearDetectedElementLocation() {
@@ -368,6 +299,7 @@ final class CompanionManager: ObservableObject {
         currentResponseTask?.cancel()
         currentResponseTask = nil
         shortcutTransitionCancellable?.cancel()
+        dictationShortcutCancellable?.cancel()
         doubleTapControlCancellable?.cancel()
         voiceStateCancellable?.cancel()
         audioPowerCancellable?.cancel()
@@ -542,21 +474,30 @@ final class CompanionManager: ObservableObject {
                 self?.handleShortcutTransition(transition)
             }
 
+        dictationShortcutCancellable = globalPushToTalkShortcutMonitor
+            .dictationShortcutTransitionPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] transition in
+                self?.handleShortcutTransition(transition, isDictation: true)
+            }
+
         doubleTapControlCancellable = globalPushToTalkShortcutMonitor
             .textChatDoubleTapPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in
-                guard let self, !self.showOnboardingVideo else { return }
+                guard let self, !self.isOnboardingTourRunning else { return }
                 self.toggleTextChat()
             }
     }
 
-    private func handleShortcutTransition(_ transition: BuddyPushToTalkShortcut.ShortcutTransition) {
+    /// - Parameter isDictation: true for the dictation shortcut, whose transcript is
+    ///   typed into the focused text field instead of being sent to the AI.
+    private func handleShortcutTransition(_ transition: BuddyPushToTalkShortcut.ShortcutTransition, isDictation: Bool = false) {
         switch transition {
         case .pressed:
             guard !buddyDictationManager.isDictationInProgress else { return }
             // Don't register push-to-talk while the onboarding video is playing
-            guard !showOnboardingVideo else { return }
+            guard !isOnboardingTourRunning else { return }
 
             // Cancel any pending transient hide so the overlay stays visible
             transientHideTask?.cancel()
@@ -572,10 +513,13 @@ final class CompanionManager: ObservableObject {
             // Dismiss the menu bar panel so it doesn't cover the screen
             NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
 
-            // Cancel any in-progress response and TTS from a previous utterance
-            currentResponseTask?.cancel()
+            // Stop speech so the mic doesn't pick it up. Asking a new question also
+            // cancels the previous answer; dictating leaves it alone.
             ttsClient.stopPlayback()
-            clearDetectedElementLocation()
+            if !isDictation {
+                currentResponseTask?.cancel()
+                clearDetectedElementLocation()
+            }
 
             // Dismiss the onboarding prompt if it's showing
             if showOnboardingPrompt {
@@ -600,6 +544,11 @@ final class CompanionManager: ObservableObject {
                         // Partial transcripts are hidden (waveform-only UI)
                     },
                     submitDraftText: { [weak self] finalTranscript in
+                        if isDictation {
+                            // Dictation: type it where the user's cursor is. No AI, no tokens.
+                            DictationTextInserter.insert(finalTranscript)
+                            return
+                        }
                         self?.lastTranscript = finalTranscript
                         print("🗣️ Companion received transcript: \(finalTranscript)")
                         ClickyAnalytics.trackUserMessageSent(transcript: finalTranscript)
@@ -665,11 +614,51 @@ final class CompanionManager: ObservableObject {
         if let replyInstruction = ClickySettings.language.replyInstruction {
             systemPrompt += "\n\nlanguage: \(replyInstruction)"
         }
+        if ClickySettings.memoryEnabled {
+            systemPrompt += "\n\nmemory: when the user tells you something lasting about themselves that will help later (name, studies, job, preferences, ongoing projects), add [REMEMBER: short fact] right before any point tag. at most one per reply, only for genuinely lasting facts, never for what's on screen. if they ask you to remember something, always do it."
+        }
         let customInstructions = ClickySettings.customInstructions
         if !customInstructions.isEmpty {
             systemPrompt += "\n\nthe user's own instructions (follow them unless they conflict with the rules above):\n\(customInstructions)"
         }
         return systemPrompt
+    }
+
+    /// The question plus optional context: remembered facts about the user and,
+    /// when the question is about it, the text of the document open in the app
+    /// they're using. Kept out of the system prompt so the warm spare process
+    /// (keyed by system prompt) stays reusable.
+    static func userPromptWithContext(
+        question: String,
+        documentApplication: NSRunningApplication?,
+        useCavemanMode: Bool
+    ) async -> String {
+        var contextBlocks: [String] = []
+
+        if ClickySettings.memoryEnabled, let memoryContext = MemoryStore.shared.promptContext {
+            contextBlocks.append(memoryContext)
+        }
+
+        if ClickySettings.documentReadingEnabled,
+           OpenDocumentReader.isQuestionAboutDocument(question),
+           let documentApplication {
+            let maxDocumentCharacters = useCavemanMode ? 12_000 : 40_000
+            let openDocument = await Task.detached(priority: .userInitiated) {
+                OpenDocumentReader.readOpenDocument(in: documentApplication, maxCharacters: maxDocumentCharacters)
+            }.value
+            if let openDocument {
+                let truncationNote = openDocument.wasTruncated ? " (only the beginning, it's long)" : ""
+                contextBlocks.append("""
+                the user has "\(openDocument.fileName)" open in \(documentApplication.localizedName ?? "an app"). its full text\(truncationNote):
+                <<<
+                \(openDocument.text)
+                >>>
+                """)
+            }
+        }
+
+        guard !contextBlocks.isEmpty else { return question }
+        return contextBlocks.joined(separator: "\n\n") + "\n\nthe user's question: \(question)"
     }
 
     /// Token-saving variant of the companion prompt used in caveman mode.
@@ -753,11 +742,18 @@ final class CompanionManager: ObservableObject {
                     (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
                 }
 
+                let userPromptWithContext = await Self.userPromptWithContext(
+                    question: transcript,
+                    documentApplication: frontmostApplicationTracker.lastExternalApplication,
+                    useCavemanMode: useCavemanMode
+                )
+                guard !Task.isCancelled else { return }
+
                 let (fullResponseText, _) = try await makeAIClient().analyzeImageStreaming(
                     images: labeledImages,
                     systemPrompt: Self.composedSystemPrompt(useCavemanMode: useCavemanMode),
                     conversationHistory: historyForAPI,
-                    userPrompt: transcript,
+                    userPrompt: userPromptWithContext,
                     onTextChunk: { [weak self] accumulatedText in
                         // Voice: no streaming text display — spinner stays until TTS plays.
                         // Text chat: stream the reply into the chat window.
@@ -769,7 +765,14 @@ final class CompanionManager: ObservableObject {
                 guard !Task.isCancelled else { return }
 
                 // Parse the [POINT:...] tag from Claude's response
-                let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
+                // Save any [REMEMBER: ...] facts, then parse the [POINT:...] tag
+                let (responseTextWithoutMemoryTags, rememberedFacts) = MemoryStore.extractRememberTags(from: fullResponseText)
+                if ClickySettings.memoryEnabled {
+                    for rememberedFact in rememberedFacts {
+                        MemoryStore.shared.add(rememberedFact)
+                    }
+                }
+                let parseResult = Self.parsePointingCoordinates(from: responseTextWithoutMemoryTags)
                 let spokenText = parseResult.spokenText
 
                 // Handle element pointing if Claude returned coordinates.
@@ -1004,79 +1007,31 @@ final class CompanionManager: ObservableObject {
         )
     }
 
-    // MARK: - Onboarding Video
+    // MARK: - Onboarding Tour
 
-    /// Sets up the onboarding video player, starts playback, and schedules
-    /// the demo interaction at 40s. Called by BlueCursorView when onboarding starts.
-    func setupOnboardingVideo() {
-        guard let videoURL = URL(string: "https://stream.mux.com/e5jB8UuSrtFABVnTHCR7k3sIsmcUHCyhtLu1tzqLlfs.m3u8") else { return }
+    /// Built-in first-launch tour, started by BlueCursorView right after the
+    /// "hey! i'm yoclicky" greeting: the cursor points at something on screen,
+    /// then a tip bubble explains the shortcuts. (Replaces the original
+    /// streamed intro video and music.)
+    func startOnboardingTour() {
+        isOnboardingTourRunning = true
+        ClickyAnalytics.trackOnboardingDemoTriggered()
 
-        let player = AVPlayer(url: videoURL)
-        player.isMuted = false
-        player.volume = 0.0
-        self.onboardingVideoPlayer = player
-        self.showOnboardingVideo = true
-        self.onboardingVideoOpacity = 0.0
-
-        // Start playback immediately — the video plays while invisible,
-        // then we fade in both the visual and audio over 1s.
-        player.play()
-
-        // Wait for SwiftUI to mount the view, then set opacity to 1.
-        // The .animation modifier on the view handles the actual animation.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            self.onboardingVideoOpacity = 1.0
-            // Fade audio volume from 0 → 1 over 2s to match visual fade
-            self.fadeInVideoAudio(player: player, targetVolume: 1.0, duration: 2.0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.performOnboardingDemoInteraction()
         }
-
-        // At 40 seconds into the video, trigger the onboarding demo where
-        // Clicky flies to something interesting on screen and comments on it
-        let demoTriggerTime = CMTime(seconds: 40, preferredTimescale: 600)
-        onboardingDemoTimeObserver = player.addBoundaryTimeObserver(
-            forTimes: [NSValue(time: demoTriggerTime)],
-            queue: .main
-        ) { [weak self] in
-            ClickyAnalytics.trackOnboardingDemoTriggered()
-            self?.performOnboardingDemoInteraction()
-        }
-
-        // Fade out and clean up when the video finishes
-        onboardingVideoEndObserver = NotificationCenter.default.addObserver(
-            forName: AVPlayerItem.didPlayToEndTimeNotification,
-            object: player.currentItem,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            ClickyAnalytics.trackOnboardingVideoCompleted()
-            self.onboardingVideoOpacity = 0.0
-            // Wait for the 2s fade-out animation to complete before tearing down
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                self.tearDownOnboardingVideo()
-                // After the video disappears, stream in the prompt to try talking
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    self.startOnboardingPromptStream()
-                }
-            }
-        }
-    }
-
-    func tearDownOnboardingVideo() {
-        showOnboardingVideo = false
-        if let timeObserver = onboardingDemoTimeObserver {
-            onboardingVideoPlayer?.removeTimeObserver(timeObserver)
-            onboardingDemoTimeObserver = nil
-        }
-        onboardingVideoPlayer?.pause()
-        onboardingVideoPlayer = nil
-        if let observer = onboardingVideoEndObserver {
-            NotificationCenter.default.removeObserver(observer)
-            onboardingVideoEndObserver = nil
+        // Leave time for the pointing flight and its comment, then show the tip.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 9.0) {
+            self.isOnboardingTourRunning = false
+            self.startOnboardingPromptStream()
         }
     }
 
     private func startOnboardingPromptStream() {
-        let message = "press control + option and introduce yourself"
+        var message = "hold \(ClickySettings.pushToTalkShortcut.displayText) and ask me anything"
+        if ClickySettings.doubleTapKey != .off {
+            message += ". double-tap \(ClickySettings.doubleTapKey.displayName) to type instead"
+        }
         onboardingPromptText = ""
         showOnboardingPrompt = true
         onboardingPromptOpacity = 0.0
@@ -1108,25 +1063,6 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    /// Gradually raises an AVPlayer's volume from its current level to the
-    /// target over the specified duration, creating a smooth audio fade-in.
-    private func fadeInVideoAudio(player: AVPlayer, targetVolume: Float, duration: Double) {
-        let steps = 20
-        let stepInterval = duration / Double(steps)
-        let volumeIncrement = (targetVolume - player.volume) / Float(steps)
-        var stepsRemaining = steps
-
-        Timer.scheduledTimer(withTimeInterval: stepInterval, repeats: true) { timer in
-            stepsRemaining -= 1
-            player.volume += volumeIncrement
-
-            if stepsRemaining <= 0 {
-                timer.invalidate()
-                player.volume = targetVolume
-            }
-        }
-    }
-
     // MARK: - Onboarding Demo Interaction
 
     private static let onboardingDemoSystemPrompt = """
@@ -1145,7 +1081,7 @@ final class CompanionManager: ObservableObject {
 
     /// Captures a screenshot and asks Claude to find something interesting to
     /// point at, then triggers the buddy's flight animation. Used during
-    /// onboarding to demo the pointing feature while the intro video plays.
+    /// onboarding to demo the pointing feature.
     func performOnboardingDemoInteraction() {
         // Don't interrupt an active voice response
         guard voiceState == .idle || voiceState == .responding else { return }

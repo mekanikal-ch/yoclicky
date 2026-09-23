@@ -1,162 +1,136 @@
-Update: April 27, 2026.
+<p align="center">
+  <img src="design/AppIcon-1024.png" width="128" alt="YoClicky icon">
+</p>
 
-Hi there! I'm Farza, the guy that made Clicky.
+<h1 align="center">YoClicky</h1>
 
-The existing codebase remains open source. Tinker with it, make it yours, start a company out of it, do whatever you want I don't mind. But, for all the new stuff I'm hacking on, gonna keep it private. To get the latest Clicky, you can go [here](https://www.heyclicky.com/).
+<p align="center">
+  An AI buddy that lives next to your cursor on macOS. It sees your screen, talks with you, and points at things.<br>
+  Runs on <b>your own Claude subscription</b>, so there's no extra subscription to pay.
+</p>
 
-I also tweeted about this [here](https://x.com/FarzaTV/status/2043402737828962489).
+<p align="center">
+  <a href="https://github.com/YOUR_GITHUB_USERNAME/yoclicky/releases/latest"><b>Download for macOS</b></a>
+  ·
+  <a href="#install">Install</a>
+  ·
+  <a href="#how-it-works">How it works</a>
+  ·
+  <a href="#build-from-source">Build from source</a>
+</p>
 
-Go crazy with this repo!! It's an MIT license.
+<!-- Replace with a short screen recording of YoClicky pointing at something (docs/demo.gif). -->
+<p align="center"><img src="docs/demo.gif" width="720" alt="YoClicky pointing at a button while answering a question"></p>
 
-# Hi, this is Clicky.
-It's an AI teacher that lives as a buddy next to your cursor. It can see your screen, talk to you, and even point at stuff. Kinda like having a real teacher next to you.
+---
 
-Download it [here](https://www.clicky.so/) for free.
+## What it is
 
-Here's the [original tweet](https://x.com/FarzaTV/status/2041314633978659092) that kinda blew up for a demo for more context.
+YoClicky is a free, open-source take on [Clicky / HeyClicky](https://www.heyclicky.com/). Hold a shortcut, ask a question out loud, and a small cursor next to yours answers, then flies over to the button, menu or line of code it's talking about.
 
-![Clicky — an ai buddy that lives on your mac](clicky-demo.gif)
+HeyClicky routes everything through its own servers and charges a subscription. YoClicky instead uses the **Claude Code** command-line tool already on your Mac, logged in with **your Claude Pro or Max plan**. No API keys, no accounts, no YoClicky servers.
 
-This is the open-source version of Clicky for those that want to hack on it, build their own features, or just see how it works under the hood.
+## Features
 
-## Get started with Claude Code
+- **Ask about your screen.** Hold `control + option`, speak, release. YoClicky looks at your screen, answers out loud, and points at what it means.
+- **Text chat.** Double-tap `control` for a chat window, when you can't talk.
+- **Dictation anywhere.** Hold `control + shift` and speak: your words are typed into whatever text field you're in. Uses no tokens.
+- **Reads the whole document.** Ask "summarize this PDF" and it reads the entire file open in Preview, TextEdit, Xcode, Word…, not just what's visible.
+- **Memory.** Tell it something once ("I study at ETH") and it remembers it between sessions. You can view and delete every memory.
+- **Saves tokens.** Caveman style (very short answers), Haiku / Sonnet / Opus, choose what screenshots to send and how much history.
+- **Your language.** Listens, speaks and answers in English, French, German, Spanish and more, with any macOS voice.
+- **Liquid Glass design,** custom cursor color, hide-until-needed cursor, custom shortcuts.
 
-The fastest way to get this running is with [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+## Requirements
 
-Once you get Claude running, paste this:
+- macOS 14.2 or later, Apple Silicon or Intel
+- A Claude **Pro or Max** subscription
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and logged in:
+  ```sh
+  curl -fsSL https://claude.ai/install.sh | bash
+  claude   # log in once with your Claude account, then quit
+  ```
 
-```
-Hi Claude.
+## Install
 
-Clone https://github.com/farzaa/clicky.git into my current directory.
+1. Download `YoClicky-x.y.dmg` from the [latest release](https://github.com/YOUR_GITHUB_USERNAME/yoclicky/releases/latest).
+2. Open it and drag **YoClicky** into **Applications**.
+3. Open YoClicky from Applications.
+   <!-- Remove this step once releases are notarized. -->
+   YoClicky isn't notarized by Apple yet, so macOS will say it can't verify the developer. Click **Done**, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**. You only do this once.
+4. Click the YoClicky icon in the menu bar and grant the four permissions it asks for:
+   - **Microphone** and **Speech Recognition**, to hear you
+   - **Screen Recording**, to see your screen when you ask something
+   - **Accessibility**, for the global shortcuts, pointing and dictation
+5. Click **Start**. That's it.
 
-Then read the CLAUDE.md. I want to get Clicky running locally on my Mac.
+In **Settings → AI → Test Connection** you can check that YoClicky reaches Claude with your account.
 
-Help me set up everything — the Cloudflare Worker with my own API keys, the proxy URLs, and getting it building in Xcode. Walk me through it.
-```
+## Shortcuts
 
-That's it. It'll clone the repo, read the docs, and walk you through the whole setup. Once you're running you can just keep talking to it — build features, fix bugs, whatever. Go crazy.
+| Shortcut | What it does |
+|---|---|
+| Hold `control + option` | Ask YoClicky out loud |
+| Double-tap `control` | Open or close the text chat |
+| Hold `control + shift` | Dictate into the current text field |
 
-## Manual setup
+All of them can be changed in **Settings → Shortcuts**.
 
-If you want to do it yourself, here's the deal.
-
-### Prerequisites
-
-- macOS 14.2+ (for ScreenCaptureKit)
-- Xcode 15+
-- Node.js 18+ (for the Cloudflare Worker)
-- A [Cloudflare](https://cloudflare.com) account (free tier works)
-- API keys for: [Anthropic](https://console.anthropic.com), [AssemblyAI](https://www.assemblyai.com), [ElevenLabs](https://elevenlabs.io)
-
-### 1. Set up the Cloudflare Worker
-
-The Worker is a tiny proxy that holds your API keys. The app talks to the Worker, the Worker talks to the APIs. This way your keys never ship in the app binary.
-
-```bash
-cd worker
-npm install
-```
-
-Now add your secrets. Wrangler will prompt you to paste each one:
-
-```bash
-npx wrangler secret put ANTHROPIC_API_KEY
-npx wrangler secret put ASSEMBLYAI_API_KEY
-npx wrangler secret put ELEVENLABS_API_KEY
-```
-
-For the ElevenLabs voice ID, open `wrangler.toml` and set it there (it's not sensitive):
-
-```toml
-[vars]
-ELEVENLABS_VOICE_ID = "your-voice-id-here"
-```
-
-Deploy it:
-
-```bash
-npx wrangler deploy
-```
-
-It'll give you a URL like `https://your-worker-name.your-subdomain.workers.dev`. Copy that.
-
-### 2. Run the Worker locally (for development)
-
-If you want to test changes to the Worker without deploying:
-
-```bash
-cd worker
-npx wrangler dev
-```
-
-This starts a local server (usually `http://localhost:8787`) that behaves exactly like the deployed Worker. You'll need to create a `.dev.vars` file in the `worker/` directory with your keys:
+## How it works
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
-ASSEMBLYAI_API_KEY=...
-ELEVENLABS_API_KEY=...
-ELEVENLABS_VOICE_ID=...
+you speak ──► Apple speech recognition (on your Mac)
+                  │
+                  ▼
+      question + screenshot ──► `claude -p` (Claude Code CLI, your account) ──► answer
+                                                                      │
+                  ┌───────────────────────────────────────────────────┘
+                  ▼
+      macOS voice reads it out, the cursor flies to what it's pointing at
 ```
 
-Then update the proxy URLs in the Swift code to point to `http://localhost:8787` instead of the deployed Worker URL while developing. Grep for `clicky-proxy` to find them all.
+- Nothing runs in the background. A screenshot is taken only when you release the talk shortcut or send a chat message, and it's never saved.
+- Your voice is transcribed by Apple, on-device by default.
+- Your question and screenshot go to Claude through the official Claude Code CLI, using your own login. Usage counts toward your plan's normal limits.
+- Settings, memories and the conversation stay on your Mac. No analytics, no tracking.
 
-### 3. Update the proxy URLs in the app
+## FAQ
 
-The app has the Worker URL hardcoded in a few places. Search for `your-worker-name.your-subdomain.workers.dev` and replace it with your Worker URL:
+**Is it really free?**
+YoClicky is free. It needs a Claude Pro or Max plan, which you may already have. It uses that plan instead of a second subscription.
 
-```bash
-grep -r "clicky-proxy" leanring-buddy/
+**How much of my Claude plan does it use?**
+A question is roughly 2,500 tokens with a screenshot, or about half that in Caveman style with Haiku. Settings → AI explains what each option costs.
+
+**Is it affiliated with Anthropic or HeyClicky?**
+No. It's an independent open-source project built on the MIT-licensed original Clicky. It uses Anthropic's official Claude Code CLI; please follow [Anthropic's usage policies and terms](https://www.anthropic.com/legal) for your plan.
+
+**Why is my Mac warning me when I open it?**
+Releases aren't notarized by Apple yet, which requires a paid Apple developer account. See step 3 of [Install](#install), or [build it yourself](#build-from-source).
+
+**Something doesn't work.**
+Settings → General → Open Logs shows what happened. Please [open an issue](https://github.com/YOUR_GITHUB_USERNAME/yoclicky/issues) and include the relevant lines.
+
+## Build from source
+
+Needs Xcode 26 or later (the Liquid Glass code needs the macOS 26 SDK; the app itself still runs on macOS 14.2+).
+
+```sh
+git clone https://github.com/YOUR_GITHUB_USERNAME/yoclicky.git
+cd yoclicky
+open leanring-buddy.xcodeproj    # or build from the command line:
+
+SIGN_IDENTITY="Apple Development" scripts/build-local.sh   # builds, signs and installs to /Applications
+scripts/build-dmg.sh                                        # builds dist/YoClicky-<version>.dmg
 ```
 
-You'll find it in:
-- `CompanionManager.swift` — Claude chat + ElevenLabs TTS
-- `AssemblyAIStreamingTranscriptionProvider.swift` — AssemblyAI token endpoint
+`build-local.sh` signs with a certificate from your keychain, so macOS keeps your permissions between rebuilds. List yours with `security find-identity -v -p codesigning`.
 
-### 4. Open in Xcode and run
+## Credits
 
-```bash
-open leanring-buddy.xcodeproj
-```
+- Based on [Clicky](https://github.com/farzaa/clicky) by [Farza](https://x.com/FarzaTV), released under the MIT license. Thank you for open-sourcing it.
+- YoClicky changes: Claude Code backend, macOS voices and speech, text chat, dictation, document reading, memory, settings, Liquid Glass UI.
 
-In Xcode:
-1. Select the `leanring-buddy` scheme (yes, the typo is intentional, long story)
-2. Set your signing team under Signing & Capabilities
-3. Hit **Cmd + R** to build and run
+## License
 
-The app will appear in your menu bar (not the dock). Click the icon to open the panel, grant the permissions it asks for, and you're good.
-
-### Permissions the app needs
-
-- **Microphone** — for push-to-talk voice capture
-- **Accessibility** — for the global keyboard shortcut (Control + Option)
-- **Screen Recording** — for taking screenshots when you use the hotkey
-- **Screen Content** — for ScreenCaptureKit access
-
-## Architecture
-
-If you want the full technical breakdown, read `CLAUDE.md`. But here's the short version:
-
-**Menu bar app** (no dock icon) with two `NSPanel` windows — one for the control panel dropdown, one for the full-screen transparent cursor overlay. Push-to-talk streams audio over a websocket to AssemblyAI, sends the transcript + screenshot to Claude via streaming SSE, and plays the response through ElevenLabs TTS. Claude can embed `[POINT:x,y:label:screenN]` tags in its responses to make the cursor fly to specific UI elements across multiple monitors. All three APIs are proxied through a Cloudflare Worker.
-
-## Project structure
-
-```
-leanring-buddy/          # Swift source (yes, the typo stays)
-  CompanionManager.swift    # Central state machine
-  CompanionPanelView.swift  # Menu bar panel UI
-  ClaudeAPI.swift           # Claude streaming client
-  ElevenLabsTTSClient.swift # Text-to-speech playback
-  OverlayWindow.swift       # Blue cursor overlay
-  AssemblyAI*.swift         # Real-time transcription
-  BuddyDictation*.swift     # Push-to-talk pipeline
-worker/                  # Cloudflare Worker proxy
-  src/index.ts              # Three routes: /chat, /tts, /transcribe-token
-CLAUDE.md                # Full architecture doc (agents read this)
-```
-
-## Contributing
-
-PRs welcome. If you're using Claude Code, it already knows the codebase — just tell it what you want to build and point it at `CLAUDE.md`.
-
-Got feedback? DM me on X [@farzatv](https://x.com/farzatv).
+MIT, see [LICENSE](LICENSE).

@@ -14,6 +14,9 @@ import Foundation
 
 final class GlobalPushToTalkShortcutMonitor: ObservableObject {
     let shortcutTransitionPublisher = PassthroughSubject<BuddyPushToTalkShortcut.ShortcutTransition, Never>()
+    /// Hold-to-dictate shortcut (Settings > Shortcuts > Dictation).
+    let dictationShortcutTransitionPublisher = PassthroughSubject<BuddyPushToTalkShortcut.ShortcutTransition, Never>()
+    private var isDictationShortcutCurrentlyPressed = false
 
     private var globalEventTap: CFMachPort?
     private var globalEventTapRunLoopSource: CFRunLoopSource?
@@ -149,11 +152,33 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
         case .none:
             break
         case .pressed:
+            // Only one of talk / dictate at a time.
+            guard !isDictationShortcutCurrentlyPressed else { break }
             isShortcutCurrentlyPressed = true
             shortcutTransitionPublisher.send(.pressed)
         case .released:
             isShortcutCurrentlyPressed = false
             shortcutTransitionPublisher.send(.released)
+        }
+
+        let dictationTransition = BuddyPushToTalkShortcut.shortcutTransition(
+            for: eventType,
+            keyCode: eventKeyCode,
+            modifierFlagsRawValue: event.flags.rawValue,
+            wasShortcutPreviouslyPressed: isDictationShortcutCurrentlyPressed,
+            shortcut: ClickySettings.dictationShortcut
+        )
+
+        switch dictationTransition {
+        case .none:
+            break
+        case .pressed:
+            guard !isShortcutCurrentlyPressed else { break }
+            isDictationShortcutCurrentlyPressed = true
+            dictationShortcutTransitionPublisher.send(.pressed)
+        case .released:
+            isDictationShortcutCurrentlyPressed = false
+            dictationShortcutTransitionPublisher.send(.released)
         }
 
         return Unmanaged.passUnretained(event)

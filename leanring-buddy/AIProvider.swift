@@ -22,6 +22,13 @@ protocol AIProviderClient {
         userPrompt: String,
         onTextChunk: @MainActor @Sendable (String) -> Void
     ) async throws -> (text: String, duration: TimeInterval)
+
+    /// Optionally prepares for the next request (e.g. starts a process ahead of time).
+    func prewarm(systemPrompt: String)
+}
+
+extension AIProviderClient {
+    func prewarm(systemPrompt: String) {}
 }
 
 extension ClaudeCodeCLI: AIProviderClient {}

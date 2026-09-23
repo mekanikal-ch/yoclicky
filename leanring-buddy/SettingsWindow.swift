@@ -8,6 +8,7 @@
 
 import AppKit
 import Combine
+import ServiceManagement
 import SwiftUI
 
 @MainActor
@@ -178,6 +179,7 @@ final class ShortcutRecorder: ObservableObject {
 
 struct SettingsView: View {
     enum SettingsPage: String, CaseIterable, Identifiable {
+        case general
         case ai
         case cursor
         case shortcuts
@@ -186,6 +188,7 @@ struct SettingsView: View {
 
         var title: String {
             switch self {
+            case .general: return "General"
             case .ai: return "AI"
             case .cursor: return "Appearance"
             case .shortcuts: return "Shortcuts"
@@ -194,6 +197,7 @@ struct SettingsView: View {
 
         var systemImage: String {
             switch self {
+            case .general: return "gearshape"
             case .ai: return "sparkles"
             case .cursor: return "cursorarrow"
             case .shortcuts: return "keyboard"
@@ -203,7 +207,20 @@ struct SettingsView: View {
 
     @ObservedObject var companionManager: CompanionManager
     @StateObject private var shortcutRecorder: ShortcutRecorder
-    @State private var selectedPage: SettingsPage = .ai
+    @State private var selectedPage: SettingsPage = .general
+
+    enum ConnectionTestState {
+        case idle
+        case testing
+        case succeeded(seconds: TimeInterval)
+        case failed(message: String)
+    }
+
+    /// nil while loading; "" when the CLI wasn't found.
+    @State private var claudeCodeVersion: String?
+    @State private var connectionTestState: ConnectionTestState = .idle
+    @State private var isLaunchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+    @State private var launchAtLoginErrorMessage: String?
 
     @AppStorage(ClickySettings.cursorColorKey) private var cursorColorHex = ClickySettings.defaultCursorColorHex
     @AppStorage(DS.Glass.windowOpacityKey) private var windowOpacity = DS.Glass.defaultWindowOpacity
@@ -246,7 +263,10 @@ struct SettingsView: View {
                         .foregroundColor(DS.Colors.textPrimary)
 
                     switch selectedPage {
+                    case .general:
+                        generalSection
                     case .ai:
+                        claudeCodeStatusSection
                         aiSection
                     case .cursor:
                         cursorSection
@@ -306,6 +326,117 @@ struct SettingsView: View {
         .frame(width: 180)
         .frame(maxHeight: .infinity)
         .glassCard(cornerRadius: 14)
+    }
+
+    // MARK: General
+
+    private var generalSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            settingsSection(title: "STARTUP") {
+                settingsRow(title: "Launch at login", subtitle: "Start YoClicky automatically when you log in.") {
+                    Toggle("", isOn: Binding(
+                        get: { isLaunchAtLoginEnabled },
+                        set: { setLaunchAtLogin($0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                }
+                if let launchAtLoginErrorMessage {
+                    Text(launchAtLoginErrorMessage)
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.Colors.destructiveText)
+                }
+            }
+
+            settingsSection(title: "TROUBLESHOOTING") {
+                settingsRow(title: "Logs", subtitle: "What YoClicky did and any errors, in ~/Library/Logs/YoClicky.") {
+                    HStack(spacing: 8) {
+                        Button("Open Logs") { AppLogFile.openInViewer() }
+                            .buttonStyle(GlassButtonStyle())
+                        Button("Show in Finder") { AppLogFile.revealInFinder() }
+                            .buttonStyle(GlassButtonStyle())
+                    }
+                }
+            }
+        }
+    }
+
+    private func setLaunchAtLogin(_ isEnabled: Bool) {
+        do {
+            if isEnabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLoginErrorMessage = nil
+        } catch {
+            launchAtLoginErrorMessage = "Couldn't change this: \(error.localizedDescription)"
+        }
+        isLaunchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+    }
+
+    // MARK: Claude Code status
+
+    private var claudeCodeStatusSection: some View {
+        settingsSection(title: "CLAUDE CODE") {
+            settingsRow(title: "Installed", subtitle: claudeCodeInstallSubtitle) {
+                Image(systemName: claudeCodeVersion == nil ? "hourglass"
+                      : claudeCodeVersion!.isEmpty ? "xmark.circle.fill" : "checkmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(claudeCodeVersion == nil ? DS.Colors.textTertiary
+                                     : claudeCodeVersion!.isEmpty ? DS.Colors.destructiveText : DS.Colors.success)
+            }
+
+            settingsRow(title: "Connection", subtitle: connectionTestSubtitle) {
+                Button(action: runConnectionTest) {
+                    if case .testing = connectionTestState {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Test Connection")
+                    }
+                }
+                .buttonStyle(GlassProminentButtonStyle())
+                .disabled({ if case .testing = connectionTestState { return true } else { return false } }())
+            }
+        }
+        .task {
+            let installedVersion = await ClaudeCodeCLI.installedVersion()
+            claudeCodeVersion = installedVersion ?? ""
+        }
+    }
+
+    private var claudeCodeInstallSubtitle: String {
+        guard let claudeCodeVersion else { return "Checking…" }
+        guard !claudeCodeVersion.isEmpty else {
+            return "Not found. Install Claude Code, then run `claude` in Terminal to log in."
+        }
+        let installPath = ClaudeCodeCLI.locateClaudeExecutable() ?? ""
+        return "\(claudeCodeVersion) at \(installPath)"
+    }
+
+    private var connectionTestSubtitle: String {
+        switch connectionTestState {
+        case .idle:
+            return "Sends a tiny test message with Haiku to check your login works."
+        case .testing:
+            return "Testing…"
+        case .succeeded(let seconds):
+            return "✓ Connected with your Claude subscription, answered in \(String(format: "%.1f", seconds))s."
+        case .failed(let message):
+            return "✗ \(message)"
+        }
+    }
+
+    private func runConnectionTest() {
+        connectionTestState = .testing
+        Task {
+            do {
+                let roundTripSeconds = try await ClaudeCodeCLI.testConnection()
+                connectionTestState = .succeeded(seconds: roundTripSeconds)
+            } catch {
+                connectionTestState = .failed(message: error.localizedDescription)
+            }
+        }
     }
 
     // MARK: AI

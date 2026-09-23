@@ -157,11 +157,20 @@ final class CompanionManager: ObservableObject {
         AIProviderSettings.selectedProvider = provider
         selectedProvider = provider
         selectedModel = AIProviderSettings.selectedModel(for: provider)
+        prewarmAIClient()
     }
 
     func setSelectedModel(_ model: String) {
         selectedModel = model
         AIProviderSettings.setSelectedModel(model, for: selectedProvider)
+        prewarmAIClient()
+    }
+
+    /// Starts a spare AI process for the current model + style so the next
+    /// question skips the CLI's startup time.
+    private func prewarmAIClient() {
+        let systemPrompt = isCavemanMode ? Self.cavemanVoiceResponseSystemPrompt : Self.companionVoiceResponseSystemPrompt
+        makeAIClient().prewarm(systemPrompt: systemPrompt)
     }
 
     /// Caveman mode trades detail for fewer tokens: short system prompt, terse
@@ -172,6 +181,7 @@ final class CompanionManager: ObservableObject {
     func setCavemanMode(_ enabled: Bool) {
         isCavemanMode = enabled
         UserDefaults.standard.set(enabled, forKey: "isCavemanMode")
+        prewarmAIClient()
     }
 
     /// User preference for whether the Clicky cursor should be shown.
@@ -224,6 +234,7 @@ final class CompanionManager: ObservableObject {
         bindVoiceStateObservation()
         bindAudioPowerLevel()
         bindShortcutTransitions()
+        prewarmAIClient()
 
         // If the user already completed onboarding AND all permissions are
         // still granted, show the cursor overlay immediately. If permissions
@@ -330,6 +341,7 @@ final class CompanionManager: ObservableObject {
     }
 
     func stop() {
+        ClaudeCodeProcessPool.shared.shutdown()
         globalPushToTalkShortcutMonitor.stop()
         buddyDictationManager.cancelCurrentDictation()
         overlayWindowManager.hideOverlay()
@@ -796,7 +808,7 @@ final class CompanionManager: ObservableObject {
                     } catch {
                         ClickyAnalytics.trackTTSError(error: error.localizedDescription)
                         print("⚠️ TTS error: \(error)")
-                        speakCreditsErrorFallback()
+                        speakErrorFallback("I couldn't play the answer out loud.")
                     }
                 }
             } catch is CancellationError {
@@ -806,8 +818,10 @@ final class CompanionManager: ObservableObject {
                 print("⚠️ Companion response error: \(error)")
                 if isFromTextChat {
                     updatePendingTextChatReply(text: error.localizedDescription, isPending: false, isError: true)
+                } else if let claudeCodeError = error as? ClaudeCodeError {
+                    speakErrorFallback(claudeCodeError.spokenDescription)
                 } else {
-                    speakCreditsErrorFallback()
+                    speakErrorFallback("I couldn't reach \(selectedProvider.displayName). Check that it's set up in YoClicky settings.")
                 }
             }
 
@@ -851,10 +865,12 @@ final class CompanionManager: ObservableObject {
     /// Speaks a hardcoded error message using macOS system TTS when API
     /// credits run out. Uses NSSpeechSynthesizer so it works even when
     /// ElevenLabs is down.
-    private func speakCreditsErrorFallback() {
-        let utterance = "I couldn't reach \(selectedProvider.displayName). Check that it's set up in YoClicky settings."
-        let synthesizer = NSSpeechSynthesizer()
-        synthesizer.startSpeaking(utterance)
+    /// Speaks a short error message with the system voice so the user hears
+    /// what went wrong (e.g. not logged in, usage limit reached).
+    private func speakErrorFallback(_ utterance: String) {
+        Task {
+            try? await ttsClient.speakText(utterance)
+        }
         voiceState = .responding
     }
 

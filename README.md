@@ -1,9 +1,3 @@
-
-
-
-
-https://github.com/user-attachments/assets/74c5427b-ddbb-4436-b680-4bc5aa3d568c
-
 <p align="center">
   <img src="design/AppIcon-1024.png" width="128" alt="YoClicky icon">
 </p>
@@ -14,6 +8,12 @@ https://github.com/user-attachments/assets/74c5427b-ddbb-4436-b680-4bc5aa3d568c
   An AI buddy that lives next to your cursor on macOS. It sees your screen, talks with you, and points at things.<br>
   Runs on <b>your own Claude subscription</b>, so there's no extra subscription to pay.
 </p>
+
+
+
+https://github.com/user-attachments/assets/74c5427b-ddbb-4436-b680-4bc5aa3d568c
+
+
 
 <p align="center">
   <a href="https://github.com/mekanikal-ch/yoclicky/releases/latest"><b>Download for macOS</b></a>

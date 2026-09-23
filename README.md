@@ -2,6 +2,12 @@
   <img src="design/AppIcon-1024.png" width="128" alt="YoClicky icon">
 </p>
 
+
+
+https://github.com/user-attachments/assets/74c5427b-ddbb-4436-b680-4bc5aa3d568c
+
+
+
 <h1 align="center">YoClicky</h1>
 
 <p align="center">

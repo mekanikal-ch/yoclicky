@@ -19,9 +19,6 @@
   <a href="#build-from-source">Build from source</a>
 </p>
 
-<!-- Replace with a short screen recording of YoClicky pointing at something (docs/demo.gif). -->
-<p align="center"><img src="docs/demo.gif" width="720" alt="YoClicky pointing at a button while answering a question"></p>
-
 ---
 
 ## What it is

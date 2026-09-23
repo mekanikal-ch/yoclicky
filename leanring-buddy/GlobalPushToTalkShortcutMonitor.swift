@@ -23,6 +23,29 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
     /// waiting for the async dictation state pipeline to catch up.
     @Published private(set) var isShortcutCurrentlyPressed = false
 
+    /// Fires when the user taps the configured modifier key (control by default)
+    /// twice on its own, with no other keys or modifiers involved. Used to toggle
+    /// the text chat window.
+    let textChatDoubleTapPublisher = PassthroughSubject<Void, Never>()
+
+    /// While true (e.g. the settings window is recording a new shortcut), no
+    /// shortcut or double-tap events are published.
+    var isPaused = false {
+        didSet {
+            isCurrentControlPressClean = false
+            lastCleanControlTapTime = nil
+        }
+    }
+
+    /// Max time the key can be held for a press to count as a tap, and max gap between two taps.
+    private static let maxControlTapDuration: TimeInterval = 0.35
+    private static let maxGapBetweenControlTaps: TimeInterval = 0.45
+
+    // Double-tap state, mutated only from the event tap callback (main thread).
+    private var controlKeyDownTime: Date?
+    private var isCurrentControlPressClean = false
+    private var lastCleanControlTapTime: Date?
+
     deinit {
         stop()
     }
@@ -108,7 +131,13 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
             return Unmanaged.passUnretained(event)
         }
 
+        guard !isPaused else {
+            return Unmanaged.passUnretained(event)
+        }
+
         let eventKeyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        detectControlDoubleTap(eventType: eventType, keyCode: eventKeyCode, flags: event.flags)
+
         let shortcutTransition = BuddyPushToTalkShortcut.shortcutTransition(
             for: eventType,
             keyCode: eventKeyCode,
@@ -128,5 +157,50 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
         }
 
         return Unmanaged.passUnretained(event)
+    }
+
+    /// Tracks lone taps of the configured double-tap key. A tap is "clean" when the
+    /// key goes down with no other modifiers held and comes back up quickly with no
+    /// other key or modifier pressed in between, so push-to-talk combos and
+    /// ctrl + key style shortcuts never count as taps.
+    private func detectControlDoubleTap(eventType: CGEventType, keyCode: UInt16, flags: CGEventFlags) {
+        let doubleTapKey = ClickySettings.doubleTapKey
+        guard doubleTapKey != .off else { return }
+
+        let allModifierFlags: CGEventFlags = [.maskControl, .maskShift, .maskAlternate, .maskCommand, .maskSecondaryFn]
+        let otherModifierFlags = allModifierFlags.subtracting(doubleTapKey.eventFlag)
+
+        guard eventType == .flagsChanged, doubleTapKey.keyCodes.contains(keyCode) else {
+            // Any other key or modifier change breaks the current tap sequence
+            isCurrentControlPressClean = false
+            lastCleanControlTapTime = nil
+            return
+        }
+
+        let now = Date()
+
+        if flags.contains(doubleTapKey.eventFlag) {
+            // Key went down
+            controlKeyDownTime = now
+            isCurrentControlPressClean = flags.intersection(otherModifierFlags).isEmpty
+            return
+        }
+
+        // Key went up
+        defer { controlKeyDownTime = nil }
+        guard isCurrentControlPressClean,
+              let controlKeyDownTime,
+              now.timeIntervalSince(controlKeyDownTime) <= Self.maxControlTapDuration else {
+            lastCleanControlTapTime = nil
+            return
+        }
+
+        if let lastCleanControlTapTime,
+           now.timeIntervalSince(lastCleanControlTapTime) <= Self.maxGapBetweenControlTaps {
+            self.lastCleanControlTapTime = nil
+            textChatDoubleTapPublisher.send()
+        } else {
+            lastCleanControlTapTime = now
+        }
     }
 }

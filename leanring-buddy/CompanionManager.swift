@@ -68,16 +68,16 @@ final class CompanionManager: ObservableObject {
     // Response text is now displayed inline on the cursor overlay via
     // streamingResponseText, so no separate response overlay manager is needed.
 
-    /// Base URL for the Cloudflare Worker proxy. All API requests route
-    /// through this so keys never ship in the app binary.
-    private static let workerBaseURL = "https://your-worker-name.your-subdomain.workers.dev"
+    /// Builds a client for the selected AI provider and model. Claude goes through
+    /// the locally installed Claude Code CLI, logged in with the user's own Claude
+    /// subscription (no proxy, no API key). See AIProvider.swift for other providers.
+    private func makeAIClient() -> AIProviderClient {
+        selectedProvider.makeClient(model: selectedModel)
+    }
 
-    private lazy var claudeAPI: ClaudeAPI = {
-        return ClaudeAPI(proxyURL: "\(Self.workerBaseURL)/chat", model: selectedModel)
-    }()
-
-    private lazy var elevenLabsTTSClient: ElevenLabsTTSClient = {
-        return ElevenLabsTTSClient(proxyURL: "\(Self.workerBaseURL)/tts")
+    /// Speech uses the built-in macOS voices (no ElevenLabs key needed).
+    private lazy var ttsClient: SystemTTSClient = {
+        return SystemTTSClient()
     }()
 
     /// Conversation history so Claude remembers prior exchanges within a session.
@@ -89,6 +89,45 @@ final class CompanionManager: ObservableObject {
     private var currentResponseTask: Task<Void, Never>?
 
     private var shortcutTransitionCancellable: AnyCancellable?
+    private var doubleTapControlCancellable: AnyCancellable?
+
+    // MARK: - Text Chat
+
+    /// Messages shown in the text chat window (double-tap control to toggle).
+    @Published private(set) var textChatMessages: [TextChatMessage] = []
+    private let textChatWindowManager = TextChatWindowManager()
+    private let settingsWindowManager = SettingsWindowManager()
+
+    func openSettings() {
+        NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
+        settingsWindowManager.show(companionManager: self)
+    }
+
+    func toggleTextChat() {
+        textChatWindowManager.toggle(companionManager: self)
+    }
+
+    func clearTextChat() {
+        currentResponseTask?.cancel()
+        textChatMessages = []
+        conversationHistory = []
+    }
+
+    /// Sends a typed message through the same screenshot + Claude pipeline as
+    /// voice, but shows the reply in the chat window instead of speaking it.
+    func sendTextChatMessage(_ message: String) {
+        textChatMessages.append(TextChatMessage(role: .user, text: message))
+        sendTranscriptToClaudeWithScreenshot(transcript: message, isFromTextChat: true)
+    }
+
+    /// Updates the in-progress assistant reply in the chat, hiding any partial [POINT...] tag.
+    private func updatePendingTextChatReply(text: String, isPending: Bool, isError: Bool = false) {
+        guard let pendingIndex = textChatMessages.lastIndex(where: { $0.role == .assistant && $0.isPending }) else { return }
+        let visibleText = text.components(separatedBy: "[POINT").first ?? text
+        textChatMessages[pendingIndex].text = visibleText.trimmingCharacters(in: .whitespacesAndNewlines)
+        textChatMessages[pendingIndex].isPending = isPending
+        textChatMessages[pendingIndex].isError = isError
+    }
     private var voiceStateCancellable: AnyCancellable?
     private var audioPowerCancellable: AnyCancellable?
     private var accessibilityCheckTimer: Timer?
@@ -107,13 +146,32 @@ final class CompanionManager: ObservableObject {
     /// Used by the panel to show accurate status text ("Active" vs "Ready").
     @Published private(set) var isOverlayVisible: Bool = false
 
-    /// The Claude model used for voice responses. Persisted to UserDefaults.
-    @Published var selectedModel: String = UserDefaults.standard.string(forKey: "selectedClaudeModel") ?? "claude-sonnet-4-6"
+    /// The AI provider used for responses. Persisted to UserDefaults.
+    @Published private(set) var selectedProvider: AIProvider = AIProviderSettings.selectedProvider
+
+    /// The model used for responses, per provider. Persisted to UserDefaults.
+    @Published var selectedModel: String = AIProviderSettings.selectedModel(for: AIProviderSettings.selectedProvider)
+
+    func setSelectedProvider(_ provider: AIProvider) {
+        guard provider.isAvailable else { return }
+        AIProviderSettings.selectedProvider = provider
+        selectedProvider = provider
+        selectedModel = AIProviderSettings.selectedModel(for: provider)
+    }
 
     func setSelectedModel(_ model: String) {
         selectedModel = model
-        UserDefaults.standard.set(model, forKey: "selectedClaudeModel")
-        claudeAPI.model = model
+        AIProviderSettings.setSelectedModel(model, for: selectedProvider)
+    }
+
+    /// Caveman mode trades detail for fewer tokens: short system prompt, terse
+    /// answers, one smaller screenshot of the cursor screen, and shorter history.
+    /// Persisted to UserDefaults.
+    @Published var isCavemanMode: Bool = UserDefaults.standard.bool(forKey: "isCavemanMode")
+
+    func setCavemanMode(_ enabled: Bool) {
+        isCavemanMode = enabled
+        UserDefaults.standard.set(enabled, forKey: "isCavemanMode")
     }
 
     /// User preference for whether the Clicky cursor should be shown.
@@ -156,20 +214,7 @@ final class CompanionManager: ObservableObject {
 
         hasSubmittedEmail = true
         UserDefaults.standard.set(true, forKey: "hasSubmittedEmail")
-
-        // Identify user in PostHog
-        PostHogSDK.shared.identify(trimmedEmail, userProperties: [
-            "email": trimmedEmail
-        ])
-
-        // Submit to FormSpark
-        Task {
-            var request = URLRequest(url: URL(string: "https://submit-form.com/RWbGJxmIs")!)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: ["email": trimmedEmail])
-            _ = try? await URLSession.shared.data(for: request)
-        }
+        // Local fork: the email is no longer sent to PostHog or FormSpark.
     }
 
     func start() {
@@ -179,9 +224,6 @@ final class CompanionManager: ObservableObject {
         bindVoiceStateObservation()
         bindAudioPowerLevel()
         bindShortcutTransitions()
-        // Eagerly touch the Claude API so its TLS warmup handshake completes
-        // well before the onboarding demo fires at ~40s into the video.
-        _ = claudeAPI
 
         // If the user already completed onboarding AND all permissions are
         // still granted, show the cursor overlay immediately. If permissions
@@ -296,6 +338,7 @@ final class CompanionManager: ObservableObject {
         currentResponseTask?.cancel()
         currentResponseTask = nil
         shortcutTransitionCancellable?.cancel()
+        doubleTapControlCancellable?.cancel()
         voiceStateCancellable?.cancel()
         audioPowerCancellable?.cancel()
         accessibilityCheckTimer?.invalidate()
@@ -468,6 +511,14 @@ final class CompanionManager: ObservableObject {
             .sink { [weak self] transition in
                 self?.handleShortcutTransition(transition)
             }
+
+        doubleTapControlCancellable = globalPushToTalkShortcutMonitor
+            .textChatDoubleTapPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in
+                guard let self, !self.showOnboardingVideo else { return }
+                self.toggleTextChat()
+            }
     }
 
     private func handleShortcutTransition(_ transition: BuddyPushToTalkShortcut.ShortcutTransition) {
@@ -493,7 +544,7 @@ final class CompanionManager: ObservableObject {
 
             // Cancel any in-progress response and TTS from a previous utterance
             currentResponseTask?.cancel()
-            elevenLabsTTSClient.stopPlayback()
+            ttsClient.stopPlayback()
             clearDetectedElementLocation()
 
             // Dismiss the onboarding prompt if it's showing
@@ -542,7 +593,7 @@ final class CompanionManager: ObservableObject {
     // MARK: - Companion Prompt
 
     private static let companionVoiceResponseSystemPrompt = """
-    you're clicky, a friendly always-on companion that lives in the user's menu bar. the user just spoke to you via push-to-talk and you can see their screen(s). your reply will be spoken aloud via text-to-speech, so write the way you'd actually talk. this is an ongoing conversation — you remember everything they've said before.
+    you're yoclicky, a friendly always-on companion that lives in the user's menu bar. the user just spoke to you via push-to-talk and you can see their screen(s). your reply will be spoken aloud via text-to-speech, so write the way you'd actually talk. this is an ongoing conversation — you remember everything they've said before.
 
     rules:
     - default to one or two sentences. be direct and dense. BUT if the user asks you to explain more, go deeper, or elaborate, then go all out — give a thorough, detailed explanation with no length limit.
@@ -576,6 +627,15 @@ final class CompanionManager: ObservableObject {
     - element is on screen 2 (not where cursor is): "that's over on your other monitor — see the terminal window? [POINT:400,300:terminal:screen2]"
     """
 
+    /// Token-saving variant of the companion prompt used in caveman mode.
+    private static let cavemanVoiceResponseSystemPrompt = """
+    you're yoclicky, voice companion. you see user's screen. reply is spoken aloud.
+    talk like smart caveman: max one short sentence, fragments ok, no filler, no pleasantries, no questions back. drop articles. all lowercase, no emojis, no markdown, no symbols. keep technical words exact. only go longer if user asks to explain more.
+
+    pointing: if showing a ui element helps, end with [POINT:x,y:label] using pixel coords of the screenshot (origin top-left, dimensions in image label), label 1-3 words. else end with [POINT:none].
+    example: "color inspector, top right toolbar. click it. [POINT:1100,42:color inspector]"
+    """
+
     // MARK: - AI Response Pipeline
 
     /// Captures a screenshot, sends it along with the transcript to Claude,
@@ -583,17 +643,42 @@ final class CompanionManager: ObservableObject {
     /// the spinner/processing state until TTS audio begins playing.
     /// Claude's response may include a [POINT:x,y:label] tag which triggers
     /// the buddy to fly to that element on screen.
-    private func sendTranscriptToClaudeWithScreenshot(transcript: String) {
+    private func sendTranscriptToClaudeWithScreenshot(transcript: String, isFromTextChat: Bool = false) {
         currentResponseTask?.cancel()
-        elevenLabsTTSClient.stopPlayback()
+        ttsClient.stopPlayback()
+
+        if isFromTextChat {
+            // A newer message supersedes any reply still pending from a cancelled request
+            for index in textChatMessages.indices where textChatMessages[index].isPending {
+                textChatMessages[index].isPending = false
+                if textChatMessages[index].text.isEmpty { textChatMessages[index].text = "(cancelled)" }
+            }
+            textChatMessages.append(TextChatMessage(role: .assistant, text: "", isPending: true))
+
+            // Bring the cursor back transiently so it can point at things
+            transientHideTask?.cancel()
+            transientHideTask = nil
+            if !isClickyCursorEnabled && !isOverlayVisible {
+                overlayWindowManager.hasShownOverlayBefore = true
+                overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
+                isOverlayVisible = true
+            }
+            clearDetectedElementLocation()
+        }
 
         currentResponseTask = Task {
             // Stay in processing (spinner) state — no streaming text displayed
             voiceState = .processing
 
+            let useCavemanMode = isCavemanMode
+
             do {
-                // Capture all connected screens so the AI has full context
-                let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+                // Capture all connected screens so the AI has full context.
+                // Caveman mode sends only the cursor screen at a smaller size (~900 vs ~1400 image tokens each).
+                let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(
+                    maxDimension: useCavemanMode ? 1024 : 1280,
+                    onlyCursorScreen: useCavemanMode
+                )
 
                 guard !Task.isCancelled else { return }
 
@@ -606,17 +691,21 @@ final class CompanionManager: ObservableObject {
                 }
 
                 // Pass conversation history so Claude remembers prior exchanges
-                let historyForAPI = conversationHistory.map { entry in
+                // (caveman mode keeps only the last 3 to save tokens)
+                let historyForAPI = conversationHistory.suffix(useCavemanMode ? 3 : 10).map { entry in
                     (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
                 }
 
-                let (fullResponseText, _) = try await claudeAPI.analyzeImageStreaming(
+                let (fullResponseText, _) = try await makeAIClient().analyzeImageStreaming(
                     images: labeledImages,
-                    systemPrompt: Self.companionVoiceResponseSystemPrompt,
+                    systemPrompt: useCavemanMode ? Self.cavemanVoiceResponseSystemPrompt : Self.companionVoiceResponseSystemPrompt,
                     conversationHistory: historyForAPI,
                     userPrompt: transcript,
-                    onTextChunk: { _ in
-                        // No streaming text display — spinner stays until TTS plays
+                    onTextChunk: { [weak self] accumulatedText in
+                        // Voice: no streaming text display — spinner stays until TTS plays.
+                        // Text chat: stream the reply into the chat window.
+                        guard isFromTextChat else { return }
+                        self?.updatePendingTextChatReply(text: accumulatedText, isPending: true)
                     }
                 )
 
@@ -697,16 +786,16 @@ final class CompanionManager: ObservableObject {
 
                 ClickyAnalytics.trackAIResponseReceived(response: spokenText)
 
-                // Play the response via TTS. Keep the spinner (processing state)
-                // until the audio actually starts playing, then switch to responding.
-                if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if isFromTextChat {
+                    updatePendingTextChatReply(text: spokenText, isPending: false)
+                } else if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     do {
-                        try await elevenLabsTTSClient.speakText(spokenText)
+                        try await ttsClient.speakText(spokenText)
                         // speakText returns after player.play() — audio is now playing
                         voiceState = .responding
                     } catch {
                         ClickyAnalytics.trackTTSError(error: error.localizedDescription)
-                        print("⚠️ ElevenLabs TTS error: \(error)")
+                        print("⚠️ TTS error: \(error)")
                         speakCreditsErrorFallback()
                     }
                 }
@@ -715,7 +804,11 @@ final class CompanionManager: ObservableObject {
             } catch {
                 ClickyAnalytics.trackResponseError(error: error.localizedDescription)
                 print("⚠️ Companion response error: \(error)")
-                speakCreditsErrorFallback()
+                if isFromTextChat {
+                    updatePendingTextChatReply(text: error.localizedDescription, isPending: false, isError: true)
+                } else {
+                    speakCreditsErrorFallback()
+                }
             }
 
             if !Task.isCancelled {
@@ -735,7 +828,7 @@ final class CompanionManager: ObservableObject {
         transientHideTask?.cancel()
         transientHideTask = Task {
             // Wait for TTS audio to finish playing
-            while elevenLabsTTSClient.isPlaying {
+            while ttsClient.isPlaying {
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 guard !Task.isCancelled else { return }
             }
@@ -759,7 +852,7 @@ final class CompanionManager: ObservableObject {
     /// credits run out. Uses NSSpeechSynthesizer so it works even when
     /// ElevenLabs is down.
     private func speakCreditsErrorFallback() {
-        let utterance = "I'm all out of credits. Please DM Farza and tell him to bring me back to life."
+        let utterance = "I couldn't reach \(selectedProvider.displayName). Check that it's set up in YoClicky settings."
         let synthesizer = NSSpeechSynthesizer()
         synthesizer.startSpeaking(utterance)
         voiceState = .responding
@@ -948,7 +1041,7 @@ final class CompanionManager: ObservableObject {
     // MARK: - Onboarding Demo Interaction
 
     private static let onboardingDemoSystemPrompt = """
-    you're clicky, a small blue cursor buddy living on the user's screen. you're showing off during onboarding — look at their screen and find ONE specific, concrete thing to point at. pick something with a clear name or identity: a specific app icon (say its name), a specific word or phrase of text you can read, a specific filename, a specific button label, a specific tab title, a specific image you can describe. do NOT point at vague things like "a window" or "some text" — be specific about exactly what you see.
+    you're yoclicky, a small blue cursor buddy living on the user's screen. you're showing off during onboarding — look at their screen and find ONE specific, concrete thing to point at. pick something with a clear name or identity: a specific app icon (say its name), a specific word or phrase of text you can read, a specific filename, a specific button label, a specific tab title, a specific image you can describe. do NOT point at vague things like "a window" or "some text" — be specific about exactly what you see.
 
     make a short quirky 3-6 word observation about the specific thing you picked — something fun, playful, or curious that shows you actually read/recognized it. no emojis ever. NEVER quote or repeat text you see on screen — just react to it. keep it to 6 words max, no exceptions.
 
@@ -982,9 +1075,10 @@ final class CompanionManager: ObservableObject {
                 let dimensionInfo = " (image dimensions: \(cursorScreenCapture.screenshotWidthInPixels)x\(cursorScreenCapture.screenshotHeightInPixels) pixels)"
                 let labeledImages = [(data: cursorScreenCapture.imageData, label: cursorScreenCapture.label + dimensionInfo)]
 
-                let (fullResponseText, _) = try await claudeAPI.analyzeImageStreaming(
+                let (fullResponseText, _) = try await makeAIClient().analyzeImageStreaming(
                     images: labeledImages,
                     systemPrompt: Self.onboardingDemoSystemPrompt,
+                    conversationHistory: [],
                     userPrompt: "look around my screen and find something interesting to point at",
                     onTextChunk: { _ in }
                 )

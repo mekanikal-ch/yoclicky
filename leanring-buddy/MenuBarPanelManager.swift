@@ -147,10 +147,9 @@ final class MenuBarPanelManager: NSObject {
         let companionPanelView = CompanionPanelView(companionManager: companionManager)
             .frame(width: panelWidth)
 
-        let hostingView = NSHostingView(rootView: companionPanelView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
-        hostingView.wantsLayer = true
-        hostingView.layer?.backgroundColor = .clear
+        // Liquid Glass background (NSGlassEffectView on macOS 26+, blur before that)
+        let glassContentView = GlassBackedContentView(rootView: companionPanelView)
+        glassContentView.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
 
         let menuBarPanel = KeyablePanel(
             contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
@@ -161,9 +160,7 @@ final class MenuBarPanelManager: NSObject {
 
         menuBarPanel.isFloatingPanel = true
         menuBarPanel.level = .floating
-        menuBarPanel.isOpaque = false
-        menuBarPanel.backgroundColor = .clear
-        menuBarPanel.hasShadow = false
+        menuBarPanel.makeTransparentForGlass()
         menuBarPanel.hidesOnDeactivate = false
         menuBarPanel.isExcludedFromWindowsMenu = true
         menuBarPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -171,7 +168,7 @@ final class MenuBarPanelManager: NSObject {
         menuBarPanel.titleVisibility = .hidden
         menuBarPanel.titlebarAppearsTransparent = true
 
-        menuBarPanel.contentView = hostingView
+        menuBarPanel.contentView = glassContentView
         panel = menuBarPanel
     }
 

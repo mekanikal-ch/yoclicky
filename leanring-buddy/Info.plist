@@ -4,17 +4,13 @@
 <dict>
 	<key>LSUIElement</key>
 	<true/>
-	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/julianjear/makesomething-mac-app/main/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>/l3d2rw5ZZFRU3AadP/w2Zf8FHfhA6bKv16BQOV5OSk=</string>
-	<key>VoiceTranscriptionProvider</key>
-	<string>assemblyai</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Clicky uses your microphone so you can talk to it</string>
+	<string>YoClicky uses your microphone so you can talk to it</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>Clicky needs screen recording access to see your screen and help you.</string>
+	<string>YoClicky needs screen recording access to see your screen and help you.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Clicky uses speech recognition to transcribe your voice when you talk to it</string>
+	<string>YoClicky uses speech recognition to transcribe your voice when you talk to it</string>
+	<key>VoiceTranscriptionProvider</key>
+	<string>apple</string>
 </dict>
 </plist>

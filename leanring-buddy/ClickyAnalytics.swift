@@ -14,6 +14,9 @@ enum ClickyAnalytics {
     // MARK: - Setup
 
     static func configure() {
+        // Local fork: analytics disabled. Without setup(), every capture() call is a no-op,
+        // so transcripts and responses are never sent to PostHog.
+        return
         let config = PostHogConfig(
             apiKey: "phc_xcQPygmhTMzzYh8wNW92CCwoXmnzqyChAixh8zgpqC3C",
             host: "https://us.i.posthog.com"

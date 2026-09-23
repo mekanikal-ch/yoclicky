@@ -25,38 +25,38 @@ enum DS {
         // Higher surfaces are lighter, creating a sense of depth.
 
         /// The deepest background — used for the main app window fill.
-        static let background = Color(hex: "#101211")
+        static let background = Color(nsColor: .windowBackgroundColor)
 
         /// First elevation layer — used for cards, sidebar, top bar backgrounds.
-        static let surface1 = Color(hex: "#171918")
+        static let surface1 = Color.primary.opacity(0.04)
 
         /// Second elevation layer — used for input fields, elevated cards, chat bubbles.
-        static let surface2 = Color(hex: "#202221")
+        static let surface2 = Color(nsColor: .controlBackgroundColor)
 
         /// Third elevation layer — used for hover backgrounds on interactive elements.
-        static let surface3 = Color(hex: "#272A29")
+        static let surface3 = Color.primary.opacity(0.06)
 
         /// Fourth elevation layer — used for active/pressed states on interactive elements.
-        static let surface4 = Color(hex: "#2E3130")
+        static let surface4 = Color.primary.opacity(0.1)
 
         // ── Borders ──────────────────────────────────────────────────
 
         /// Subtle border — used for card outlines, dividers, input field borders.
-        static let borderSubtle = Color(hex: "#373B39")
+        static let borderSubtle = Color(nsColor: .separatorColor)
 
         /// Strong border — used for focused inputs, hovered card outlines.
-        static let borderStrong = Color(hex: "#444947")
+        static let borderStrong = Color.primary.opacity(0.3)
 
         // ── Text ─────────────────────────────────────────────────────
 
         /// Primary text — main body text, titles, headings.
-        static let textPrimary = Color(hex: "#ECEEED")
+        static let textPrimary = Color(nsColor: .labelColor)
 
         /// Secondary text — descriptions, hints, muted labels.
-        static let textSecondary = Color(hex: "#ADB5B2")
+        static let textSecondary = Color(nsColor: .labelColor).opacity(0.8)
 
         /// Tertiary text — very muted, used for section labels, timestamps, disabled text.
-        static let textTertiary = Color(hex: "#6B736F")
+        static let textTertiary = Color(nsColor: .secondaryLabelColor)
 
         /// Text used on top of the accent fill (#2563eb blue), like the primary button label.
         /// White on #2563eb achieves ~5.1:1 contrast — WCAG AA compliant.
@@ -93,7 +93,7 @@ enum DS {
 
         /// Accent fill — used for solid button backgrounds.
         /// #2563eb → ~5.1:1 contrast with white text (WCAG AA).
-        static let accent = blue600
+        static let accent = Color.accentColor
 
         /// Accent hover — slightly darker blue for hover state.
         /// #1d4ed8 → ~6.5:1 contrast with white text (WCAG AA+).
@@ -101,7 +101,7 @@ enum DS {
 
         /// Accent text — bright blue used for accent-colored text and icons
         /// on dark backgrounds (links, active nav items, highlighted labels).
-        static let accentText = blue400
+        static let accentText = Color.accentColor
 
         /// Very subtle accent tint — used for selected item backgrounds (e.g. current step
         /// in the sidebar). Low opacity so it doesn't overpower.
@@ -116,25 +116,25 @@ enum DS {
         static let destructiveHover = Color(hex: "#F2555A")   // Radix Red 10
 
         /// Destructive used for text on dark backgrounds (brighter for readability).
-        static let destructiveText = Color(hex: "#FF6369")    // Radix Red 11
+        static let destructiveText = Color(nsColor: .systemRed)    // Radix Red 11
 
         /// Success — checkmarks, granted status, completion indicators.
         /// Independent green so success states are visually distinct from the blue accent.
-        static let success = Color(hex: "#34D399")      // Tailwind Emerald 400
+        static let success = Color(nsColor: .systemGreen)      // Tailwind Emerald 400
 
         /// Warning — caution messages, manual verification failure explanations.
         static let warning = Color(hex: "#FFB224")            // Radix Amber 9
 
         /// Warning text — brighter variant for text on dark backgrounds.
-        static let warningText = Color(hex: "#F1A10D")        // Radix Amber 11
+        static let warningText = Color(nsColor: .systemOrange)        // Radix Amber 11
 
         /// Info/feature highlight — used for prompt card headers, code highlights.
         /// Lighter than accentText so informational elements are visually distinct
         /// from interactive accent-colored elements.
-        static let info = Color(hex: "#70B8FF")               // Radix Blue 9
+        static let info = Color(nsColor: .systemBlue)               // Radix Blue 9
 
         /// Inline code text color — slightly brighter blue for monospace code snippets.
-        static let codeText = Color(hex: "#9DC2FF")           // Radix Blue 11 variant
+        static let codeText = Color(nsColor: .systemBlue)           // Radix Blue 11 variant
 
         // ── Overlay Cursor ───────────────────────────────────────────
 
@@ -157,7 +157,7 @@ enum DS {
         /// User message bubble background in the help chat.
         /// Blue 800 — deep blue that's clearly distinct from the dark surface
         /// while keeping white text highly readable (~9:1 contrast).
-        static let helpChatUserBubble = blue800
+        static let helpChatUserBubble = blue600
 
         /// Slightly lighter variant for hover/pressed states on user bubbles.
         static let helpChatUserBubbleHover = blue700
@@ -165,7 +165,7 @@ enum DS {
         /// Footer/backdrop behind the floating help chat.
         /// Slightly lighter than the main window background so the chat zone reads
         /// as a distinct docked surface even before the pill input is visible.
-        static let helpChatBackdrop = Color(hex: "#212121")
+        static let helpChatBackdrop = Color.clear
 
         // ── Disabled State ───────────────────────────────────────────
         // Following Material Design 3's disabled pattern:

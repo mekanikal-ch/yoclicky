@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds Clicky signed with a stable Apple Development identity and installs it
+# Builds YoClicky signed with a stable Apple Development identity and installs it
 # to /Applications. A stable signature + path keeps macOS privacy permissions
 # (mic, screen recording, accessibility) across rebuilds; ad-hoc signing would
 # look like a new app on every build and revoke them.
@@ -18,9 +18,8 @@ xcodebuild -project leanring-buddy.xcodeproj -scheme leanring-buddy \
   CODE_SIGNING_ALLOWED=NO \
   build | grep -E "error:|BUILD (SUCCEEDED|FAILED)"
 
-pkill -x Clicky 2>/dev/null || true
 pkill -x YoClicky 2>/dev/null || true
-rm -rf /Applications/Clicky.app /Applications/YoClicky.app
+rm -rf /Applications/YoClicky.app
 cp -R build/Build/Products/Release/YoClicky.app /Applications/
 
 codesign --force --deep --sign "$SIGN_IDENTITY" \

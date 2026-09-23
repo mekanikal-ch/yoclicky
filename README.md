@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/YOUR_GITHUB_USERNAME/yoclicky/releases/latest"><b>Download for macOS</b></a>
+  <a href="https://github.com/mekanikal-ch/yoclicky/releases/latest"><b>Download for macOS</b></a>
   ·
   <a href="#install">Install</a>
   ·
@@ -53,7 +53,7 @@ HeyClicky routes everything through its own servers and charges a subscription. 
 
 ## Install
 
-1. Download `YoClicky-x.y.dmg` from the [latest release](https://github.com/YOUR_GITHUB_USERNAME/yoclicky/releases/latest).
+1. Download `YoClicky-x.y.dmg` from the [latest release](https://github.com/mekanikal-ch/yoclicky/releases/latest).
 2. Open it and drag **YoClicky** into **Applications**.
 3. Open YoClicky from Applications.
    <!-- Remove this step once releases are notarized. -->
@@ -109,14 +109,14 @@ No. It's an independent open-source project built on the MIT-licensed original C
 Releases aren't notarized by Apple yet, which requires a paid Apple developer account. See step 3 of [Install](#install), or [build it yourself](#build-from-source).
 
 **Something doesn't work.**
-Settings → General → Open Logs shows what happened. Please [open an issue](https://github.com/YOUR_GITHUB_USERNAME/yoclicky/issues) and include the relevant lines.
+Settings → General → Open Logs shows what happened. Please [open an issue](https://github.com/mekanikal-ch/yoclicky/issues) and include the relevant lines.
 
 ## Build from source
 
 Needs Xcode 26 or later (the Liquid Glass code needs the macOS 26 SDK; the app itself still runs on macOS 14.2+).
 
 ```sh
-git clone https://github.com/YOUR_GITHUB_USERNAME/yoclicky.git
+git clone https://github.com/mekanikal-ch/yoclicky.git
 cd yoclicky
 open leanring-buddy.xcodeproj    # or build from the command line:
 

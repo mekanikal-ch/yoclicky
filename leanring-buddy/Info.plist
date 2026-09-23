@@ -16,7 +16,5 @@
 	<string>YoClicky needs screen recording access to see your screen and help you.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>YoClicky uses speech recognition to transcribe your voice when you talk to it</string>
-	<key>VoiceTranscriptionProvider</key>
-	<string>apple</string>
 </dict>
 </plist>

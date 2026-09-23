@@ -2,9 +2,8 @@
 //  SystemTTSClient.swift
 //  leanring-buddy
 //
-//  Speaks text with the built-in macOS voices. Replaces ElevenLabsTTSClient so
-//  no TTS API key or proxy is needed. Same interface as ElevenLabsTTSClient
-//  (speakText / isPlaying / stopPlayback).
+//  Speaks text with the built-in macOS voices, so no TTS API key or server
+//  is needed (speakText / isPlaying / stopPlayback).
 //
 //  Speech is rendered to audio buffers (AVSpeechSynthesizer.write) and played
 //  through AVAudioEngine. The whole reply is rendered as ONE utterance, so

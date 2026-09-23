@@ -9,7 +9,6 @@
 
 import ServiceManagement
 import SwiftUI
-import Sparkle
 
 @main
 struct leanring_buddyApp: App {
@@ -30,18 +29,18 @@ struct leanring_buddyApp: App {
 @MainActor
 final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarPanelManager: MenuBarPanelManager?
-    private let companionManager = CompanionManager()
-    private var sparkleUpdaterController: SPUStandardUpdaterController?
+    /// Created after settings are migrated, since it reads them on init.
+    private var companionManager: CompanionManager!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLogFile.redirectOutputIfNeeded()
-        print("🎯 Clicky: Starting...")
-        print("🎯 Clicky: Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
+        print("🎯 YoClicky: Starting...")
+        print("🎯 YoClicky: Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
 
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 0])
+        LegacySettingsMigration.migrateIfNeeded()
 
-        ClickyAnalytics.configure()
-        ClickyAnalytics.trackAppOpened()
+        companionManager = CompanionManager()
 
         menuBarPanelManager = MenuBarPanelManager(companionManager: companionManager)
         companionManager.start()
@@ -51,26 +50,33 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             menuBarPanelManager?.showPanelOnLaunch()
         }
         // Launch at login is now opt-in: Settings > General.
-        // startSparkleUpdater()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        companionManager.stop()
+        companionManager?.stop()
     }
+}
 
+/// Copies preferences saved under the app's old bundle identifier
+/// (com.yourcompany.leanring-buddy, used before it became YoClicky) so
+/// existing users keep their settings. Runs once.
+enum LegacySettingsMigration {
+    private static let legacyBundleIdentifier = "com.yourcompany.leanring-buddy"
+    private static let didMigrateKey = "didMigrateLegacySettings"
 
-    private func startSparkleUpdater() {
-        let updaterController = SPUStandardUpdaterController(
-            startingUpdater: false,
-            updaterDelegate: nil,
-            userDriverDelegate: nil
-        )
-        self.sparkleUpdaterController = updaterController
+    static func migrateIfNeeded() {
+        let userDefaults = UserDefaults.standard
+        guard !userDefaults.bool(forKey: didMigrateKey) else { return }
+        userDefaults.set(true, forKey: didMigrateKey)
 
-        do {
-            try updaterController.updater.start()
-        } catch {
-            print("⚠️ Clicky: Sparkle updater failed to start: \(error)")
+        guard Bundle.main.bundleIdentifier != legacyBundleIdentifier,
+              let legacyPreferences = userDefaults.persistentDomain(forName: legacyBundleIdentifier),
+              !legacyPreferences.isEmpty else {
+            return
         }
+        for (preferenceKey, preferenceValue) in legacyPreferences where userDefaults.object(forKey: preferenceKey) == nil {
+            userDefaults.set(preferenceValue, forKey: preferenceKey)
+        }
+        print("🎯 YoClicky: migrated \(legacyPreferences.count) settings from \(legacyBundleIdentifier)")
     }
 }

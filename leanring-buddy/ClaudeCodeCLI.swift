@@ -210,7 +210,7 @@ final class ClaudeCodeProcessPool {
 
 // MARK: - Client
 
-/// Drop-in replacement for `ClaudeAPI.analyzeImageStreaming` backed by the Claude Code CLI.
+/// Answers a screenshot + question through the Claude Code CLI (see AIProviderClient).
 class ClaudeCodeCLI {
     var model: String
     /// Whether to take requests from (and refill) the shared warm process pool.

@@ -359,7 +359,9 @@ struct SettingsView: View {
     private var generalSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             settingsSection(title: "STARTUP") {
-                settingsRow(title: "Launch at login", subtitle: "Start YoClicky automatically when you log in.") {
+                settingsRow(title: "Launch at login", subtitle: isLaunchAtLoginEnabled
+                    ? "On: YoClicky starts automatically when you log in."
+                    : "Off: open YoClicky yourself from Applications.") {
                     Toggle("", isOn: Binding(
                         get: { isLaunchAtLoginEnabled },
                         set: { setLaunchAtLogin($0) }
@@ -375,7 +377,9 @@ struct SettingsView: View {
             }
 
             settingsSection(title: "SOUNDS") {
-                settingsRow(title: "Sound effects", subtitle: "Soft sounds when listening starts and for chat messages.") {
+                settingsRow(title: "Sound effects", subtitle: soundsEnabled
+                    ? "On: soft sounds when listening starts and for chat messages."
+                    : "Off: YoClicky stays silent except for spoken answers.") {
                     Toggle("", isOn: $soundsEnabled)
                         .toggleStyle(.switch)
                         .labelsHidden()
@@ -556,7 +560,9 @@ struct SettingsView: View {
 
             settingsRow(
                 title: "Hide cursor until needed",
-                subtitle: "Only appears when you talk to it, chat, or it points at something."
+                subtitle: companionManager.isClickyCursorEnabled
+                    ? "Off: the cursor always follows your mouse."
+                    : "On: the cursor only appears when you talk to it, chat, or it points at something."
             ) {
                 Toggle("", isOn: Binding(
                     get: { !companionManager.isClickyCursorEnabled },
@@ -575,7 +581,7 @@ struct SettingsView: View {
         settingsSection(title: "WINDOWS") {
             settingsRow(
                 title: "Window opacity",
-                subtitle: "Less see-through makes text easier to read."
+                subtitle: "\(Int((windowOpacity * 100).rounded()))%: \(windowOpacity < 0.4 ? "very glassy, text can be harder to read" : windowOpacity > 0.85 ? "almost solid, easiest to read" : "glassy with readable text")."
             ) {
                 HStack(spacing: 8) {
                     Image(systemName: "circle.dotted")
@@ -673,7 +679,7 @@ struct SettingsView: View {
 
     private var responsesSection: some View {
         settingsSection(title: "RESPONSES") {
-            settingsRow(title: "Model", subtitle: "Haiku is fastest and uses the least of your plan.") {
+            settingsRow(title: "Model", subtitle: modelDescription) {
                 GlassSegmentedControl {
                     ForEach(companionManager.selectedProvider.modelOptions) { modelOption in
                         GlassSegment(
@@ -684,7 +690,9 @@ struct SettingsView: View {
                     }
                 }
             }
-            settingsRow(title: "Style", subtitle: "Caveman gives very short answers and sends less, saving tokens.") {
+            settingsRow(title: "Style", subtitle: companionManager.isCavemanMode
+                ? "Caveman: one-line answers, a smaller screenshot of the cursor screen only and the last 3 exchanges. About half the tokens."
+                : "Normal: friendly one-to-two sentence answers, going deeper when you ask.") {
                 GlassSegmentedControl {
                     GlassSegment(label: "Normal", isSelected: !companionManager.isCavemanMode,
                                  action: { companionManager.setCavemanMode(false) })
@@ -692,7 +700,7 @@ struct SettingsView: View {
                                  action: { companionManager.setCavemanMode(true) })
                 }
             }
-            settingsRow(title: "Screenshots", subtitle: "What YoClicky sees with each question. None can't point at things.") {
+            settingsRow(title: "Screenshots", subtitle: screenshotDescription) {
                 GlassSegmentedControl {
                     ForEach(ScreenshotMode.allCases) { screenshotMode in
                         GlassSegment(
@@ -703,7 +711,9 @@ struct SettingsView: View {
                     }
                 }
             }
-            settingsRow(title: "Conversation memory", subtitle: "Past exchanges sent with each question. Fewer saves tokens.") {
+            settingsRow(title: "Conversation memory", subtitle: historyLength == 0
+                ? "Each question starts fresh; nothing earlier is sent."
+                : "Sends your last \(historyLength) exchange\(historyLength == 1 ? "" : "s") so YoClicky keeps the context. Fewer saves tokens.") {
                 Stepper(value: $historyLength, in: 0...10) {
                     Text("\(historyLength)")
                         .font(.system(size: 13, weight: .medium).monospacedDigit())
@@ -711,6 +721,28 @@ struct SettingsView: View {
                         .frame(minWidth: 20, alignment: .trailing)
                 }
             }
+        }
+    }
+
+    private var modelDescription: String {
+        let selectedModelID = companionManager.selectedModel.lowercased()
+        if selectedModelID.contains("haiku") {
+            return "Haiku: fastest and uses the least of your plan. Great for \"where is…\" questions."
+        }
+        if selectedModelID.contains("opus") {
+            return "Opus: smartest but slowest, and uses up your plan fastest."
+        }
+        return "Sonnet: balanced, smart and fairly fast. A good default."
+    }
+
+    private var screenshotDescription: String {
+        switch ScreenshotMode(rawValue: screenshotModeRawValue) ?? .allScreens {
+        case .allScreens:
+            return "All screens: YoClicky sees every monitor (about 1,400 tokens each)."
+        case .cursorScreen:
+            return "Cursor screen: only the screen your mouse is on. Cheaper with several monitors."
+        case .none:
+            return "None: cheapest, but YoClicky can't see your screen or point at things."
         }
     }
 
@@ -740,7 +772,7 @@ struct SettingsView: View {
 
         return VStack(alignment: .leading, spacing: 20) {
             settingsSection(title: "LANGUAGE") {
-                settingsRow(title: "Language", subtitle: "Used for listening, speaking and replies.") {
+                settingsRow(title: "Language", subtitle: "YoClicky listens, speaks and replies in \(selectedLanguage == .system ? "your Mac's language" : selectedLanguage.displayName).") {
                     Picker("", selection: $languageRawValue) {
                         ForEach(AssistantLanguage.allCases) { language in
                             Text(language.displayName).tag(language.rawValue)
@@ -753,7 +785,9 @@ struct SettingsView: View {
             }
 
             settingsSection(title: "SPEAKING") {
-                settingsRow(title: "Speak replies", subtitle: "Off shows voice answers in the chat window instead.") {
+                settingsRow(title: "Speak replies", subtitle: speakReplies
+                    ? "On: voice answers are read aloud."
+                    : "Off: voice answers appear in the chat window instead of being read aloud.") {
                     Toggle("", isOn: $speakReplies)
                         .toggleStyle(.switch)
                         .labelsHidden()
@@ -776,7 +810,7 @@ struct SettingsView: View {
                         .help("Preview \(currentVoice?.name ?? "voice")")
                     }
                 }
-                settingsRow(title: "Speed", subtitle: "How fast YoClicky talks.") {
+                settingsRow(title: "Speed", subtitle: speechRate < 0.45 ? "Slower than normal." : speechRate > 0.55 ? "Faster than normal." : "Normal speed.") {
                     HStack(spacing: 8) {
                         Image(systemName: "tortoise.fill")
                             .foregroundColor(DS.Colors.textTertiary)
@@ -789,7 +823,9 @@ struct SettingsView: View {
             }
 
             settingsSection(title: "LISTENING") {
-                settingsRow(title: "On-device recognition", subtitle: "Keeps your voice on this Mac. Turn off for Apple's more accurate servers.") {
+                settingsRow(title: "On-device recognition", subtitle: onDeviceRecognitionOnly
+                    ? "On: your voice never leaves this Mac."
+                    : "Off: Apple's servers transcribe your voice, which can be more accurate.") {
                     Toggle("", isOn: $onDeviceRecognitionOnly)
                         .toggleStyle(.switch)
                         .labelsHidden()

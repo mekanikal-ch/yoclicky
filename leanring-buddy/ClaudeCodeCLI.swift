@@ -10,8 +10,9 @@
 //  `--output-format stream-json --include-partial-messages`.
 //
 //  Reliability:
-//  - A spare `claude` process is started ahead of time (ClaudeCodeProcessPool)
-//    so a request doesn't pay the CLI's startup cost. Each request still runs in
+//  - A spare `claude` process is started ahead of time (ClaudeCodeProcessPool),
+//    at low priority and only while YoClicky is idle, so a request doesn't pay
+//    the CLI's startup cost. Each request still runs in
 //    its own one-shot process, so earlier screenshots never pile up in context.
 //  - A request fails with `.timedOut` if the CLI produces no output for 60s.
 //  - Transient failures (timeout, crash, overload) are retried once, as long as
@@ -99,7 +100,9 @@ final class ClaudeCodeProcess {
     let configurationKey: String
     let launchedAt = Date()
 
-    init(executablePath: String, model: String, systemPrompt: String) throws {
+    /// - Parameter isSpare: spares start at lower CPU priority so their startup
+    ///   never competes with speech playback or animations.
+    init(executablePath: String, model: String, systemPrompt: String, isSpare: Bool = false) throws {
         configurationKey = Self.configurationKey(model: model, systemPrompt: systemPrompt)
 
         process = Process()
@@ -134,6 +137,7 @@ final class ClaudeCodeProcess {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        process.qualityOfService = isSpare ? .utility : .userInitiated
         try process.run()
     }
 
@@ -157,7 +161,8 @@ final class ClaudeCodeProcessPool {
     private var spareProcess: ClaudeCodeProcess?
 
     /// Returns the waiting spare if it matches this model + prompt, otherwise
-    /// launches a fresh process. Either way, starts a new spare for next time.
+    /// launches a fresh process. The caller refills the spare with `prewarm`
+    /// once it's idle (starting one mid-answer made speech stutter).
     func takeProcess(executablePath: String, model: String, systemPrompt: String) throws -> ClaudeCodeProcess {
         let wantedKey = ClaudeCodeProcess.configurationKey(model: model, systemPrompt: systemPrompt)
 
@@ -178,7 +183,6 @@ final class ClaudeCodeProcessPool {
             processForRequest = try ClaudeCodeProcess(executablePath: executablePath, model: model, systemPrompt: systemPrompt)
         }
 
-        prewarm(executablePath: executablePath, model: model, systemPrompt: systemPrompt)
         return processForRequest
     }
 
@@ -186,7 +190,7 @@ final class ClaudeCodeProcessPool {
     func prewarm(executablePath: String, model: String, systemPrompt: String) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
-            let newSpare = try? ClaudeCodeProcess(executablePath: executablePath, model: model, systemPrompt: systemPrompt)
+            let newSpare = try? ClaudeCodeProcess(executablePath: executablePath, model: model, systemPrompt: systemPrompt, isSpare: true)
             self.lock.lock()
             let replacedSpare = self.spareProcess
             self.spareProcess = newSpare

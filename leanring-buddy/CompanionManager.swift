@@ -689,6 +689,7 @@ final class CompanionManager: ObservableObject {
     /// Claude's response may include a [POINT:x,y:label] tag which triggers
     /// the buddy to fly to that element on screen.
     private func sendTranscriptToClaudeWithScreenshot(transcript: String, isFromTextChat: Bool = false) {
+        pendingPrewarmTask?.cancel()
         currentResponseTask?.cancel()
         ttsClient.stopPlayback()
 
@@ -882,7 +883,25 @@ final class CompanionManager: ObservableObject {
             if !Task.isCancelled {
                 voiceState = .idle
                 scheduleTransientHideIfNeeded()
+                prewarmAIClientWhenIdle()
             }
+        }
+    }
+
+    private var pendingPrewarmTask: Task<Void, Never>?
+
+    /// Refills the spare AI process only after speech has finished, so the
+    /// CLI's startup CPU burst doesn't make the voice stutter.
+    private func prewarmAIClientWhenIdle() {
+        pendingPrewarmTask?.cancel()
+        pendingPrewarmTask = Task {
+            while ttsClient.isPlaying {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard !Task.isCancelled else { return }
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled, voiceState == .idle else { return }
+            prewarmAIClient()
         }
     }
 

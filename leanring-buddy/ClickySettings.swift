@@ -173,3 +173,171 @@ extension Color {
         return String(format: "#%02X%02X%02X", red, green, blue)
     }
 }
+
+// MARK: - Language
+
+/// Language for listening (speech recognition), speaking (voice) and replies.
+enum AssistantLanguage: String, CaseIterable, Identifiable {
+    case system
+    case english
+    case french
+    case german
+    case spanish
+    case italian
+    case portuguese
+    case dutch
+    case japanese
+    case chinese
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .system: return "Same as Mac"
+        case .english: return "English"
+        case .french: return "Français"
+        case .german: return "Deutsch"
+        case .spanish: return "Español"
+        case .italian: return "Italiano"
+        case .portuguese: return "Português"
+        case .dutch: return "Nederlands"
+        case .japanese: return "日本語"
+        case .chinese: return "中文"
+        }
+    }
+
+    var locale: Locale {
+        switch self {
+        case .system: return Locale.autoupdatingCurrent
+        case .english: return Locale(identifier: "en-US")
+        case .french: return Locale(identifier: "fr-FR")
+        case .german: return Locale(identifier: "de-DE")
+        case .spanish: return Locale(identifier: "es-ES")
+        case .italian: return Locale(identifier: "it-IT")
+        case .portuguese: return Locale(identifier: "pt-BR")
+        case .dutch: return Locale(identifier: "nl-NL")
+        case .japanese: return Locale(identifier: "ja-JP")
+        case .chinese: return Locale(identifier: "zh-CN")
+        }
+    }
+
+    /// Two-letter language code used to filter voices, e.g. "fr".
+    var languageCode: String {
+        locale.language.languageCode?.identifier ?? "en"
+    }
+
+    /// Instruction appended to the system prompt, or nil to leave replies in English.
+    var replyInstruction: String? {
+        switch self {
+        case .system:
+            guard languageCode != "en" else { return nil }
+            let languageName = Locale(identifier: "en").localizedString(forLanguageCode: languageCode) ?? languageCode
+            return "always reply in \(languageName), whatever language the screen is in."
+        case .english:
+            return nil
+        default:
+            let languageName = Locale(identifier: "en").localizedString(forLanguageCode: languageCode) ?? languageCode
+            return "always reply in \(languageName), whatever language the screen is in."
+        }
+    }
+}
+
+// MARK: - Screenshots
+
+enum ScreenshotMode: String, CaseIterable, Identifiable {
+    case allScreens
+    case cursorScreen
+    case none
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .allScreens: return "All screens"
+        case .cursorScreen: return "Cursor screen"
+        case .none: return "None"
+        }
+    }
+}
+
+// MARK: - Voice, AI and sound preferences
+
+extension ClickySettings {
+    static let languageKey = "assistantLanguage"
+    static let ttsVoiceIdentifierKey = "ttsVoiceIdentifier"
+    static let speechRateKey = "ttsSpeechRate"
+    static let speakRepliesKey = "speakReplies"
+    static let onDeviceRecognitionKey = "onDeviceSpeechRecognitionOnly"
+    static let soundsEnabledKey = "soundsEnabled"
+    static let customInstructionsKey = "customInstructions"
+    static let screenshotModeKey = "screenshotMode"
+    static let historyLengthKey = "conversationHistoryLength"
+
+    /// AVSpeechUtterance rate; 0.5 is the system default.
+    static let defaultSpeechRate = 0.5
+    static let defaultHistoryLength = 10
+
+    static var language: AssistantLanguage {
+        UserDefaults.standard.string(forKey: languageKey).flatMap(AssistantLanguage.init(rawValue:)) ?? .system
+    }
+
+    static var speechRate: Double {
+        UserDefaults.standard.object(forKey: speechRateKey) as? Double ?? defaultSpeechRate
+    }
+
+    static var speakReplies: Bool {
+        UserDefaults.standard.object(forKey: speakRepliesKey) as? Bool ?? true
+    }
+
+    static var onDeviceRecognitionOnly: Bool {
+        UserDefaults.standard.object(forKey: onDeviceRecognitionKey) as? Bool ?? true
+    }
+
+    static var soundsEnabled: Bool {
+        UserDefaults.standard.object(forKey: soundsEnabledKey) as? Bool ?? true
+    }
+
+    static var customInstructions: String {
+        UserDefaults.standard.string(forKey: customInstructionsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    static var screenshotMode: ScreenshotMode {
+        UserDefaults.standard.string(forKey: screenshotModeKey).flatMap(ScreenshotMode.init(rawValue:)) ?? .allScreens
+    }
+
+    static var historyLength: Int {
+        UserDefaults.standard.object(forKey: historyLengthKey) as? Int ?? defaultHistoryLength
+    }
+
+    /// Every preference YoClicky stores (onboarding and permission state excluded).
+    static let allPreferenceKeys = [
+        cursorColorKey, pushToTalkShortcutKey, doubleTapKeyKey, DS.Glass.windowOpacityKey,
+        languageKey, ttsVoiceIdentifierKey, speechRateKey, speakRepliesKey, onDeviceRecognitionKey,
+        soundsEnabledKey, customInstructionsKey, screenshotModeKey, historyLengthKey,
+        "isCavemanMode", "selectedClaudeModel", AIProviderSettings.selectedProviderKey, "isClickyCursorEnabled"
+    ]
+
+    static func resetAllPreferences() {
+        for preferenceKey in allPreferenceKeys {
+            UserDefaults.standard.removeObject(forKey: preferenceKey)
+        }
+        pushToTalkShortcut = .default
+    }
+}
+
+// MARK: - Sounds
+
+/// Short built-in macOS sounds for chat and push-to-talk feedback.
+enum ClickySound: String {
+    case listeningStarted = "Tink"
+    case chatOpened = "Pop"
+    case messageSent = "Morse"
+    case replyReceived = "Bottle"
+
+    func play() {
+        guard ClickySettings.soundsEnabled, let sound = NSSound(named: NSSound.Name(rawValue)) else { return }
+        sound.volume = 0.35
+        sound.play()
+    }
+}

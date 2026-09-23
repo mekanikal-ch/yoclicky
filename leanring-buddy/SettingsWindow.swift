@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import AVFoundation
 import Combine
 import ServiceManagement
 import SwiftUI
@@ -181,8 +182,10 @@ struct SettingsView: View {
     enum SettingsPage: String, CaseIterable, Identifiable {
         case general
         case ai
+        case voice
         case cursor
         case shortcuts
+        case privacy
 
         var id: String { rawValue }
 
@@ -190,6 +193,8 @@ struct SettingsView: View {
             switch self {
             case .general: return "General"
             case .ai: return "AI"
+            case .voice: return "Voice"
+            case .privacy: return "Privacy"
             case .cursor: return "Appearance"
             case .shortcuts: return "Shortcuts"
             }
@@ -199,6 +204,8 @@ struct SettingsView: View {
             switch self {
             case .general: return "gearshape"
             case .ai: return "sparkles"
+            case .voice: return "waveform"
+            case .privacy: return "hand.raised"
             case .cursor: return "cursorarrow"
             case .shortcuts: return "keyboard"
             }
@@ -224,6 +231,19 @@ struct SettingsView: View {
 
     @AppStorage(ClickySettings.cursorColorKey) private var cursorColorHex = ClickySettings.defaultCursorColorHex
     @AppStorage(DS.Glass.windowOpacityKey) private var windowOpacity = DS.Glass.defaultWindowOpacity
+    @AppStorage(ClickySettings.languageKey) private var languageRawValue = AssistantLanguage.system.rawValue
+    @AppStorage(ClickySettings.ttsVoiceIdentifierKey) private var ttsVoiceIdentifier = ""
+    @AppStorage(ClickySettings.speechRateKey) private var speechRate = ClickySettings.defaultSpeechRate
+    @AppStorage(ClickySettings.speakRepliesKey) private var speakReplies = true
+    @AppStorage(ClickySettings.onDeviceRecognitionKey) private var onDeviceRecognitionOnly = true
+    @AppStorage(ClickySettings.soundsEnabledKey) private var soundsEnabled = true
+    @AppStorage(ClickySettings.customInstructionsKey) private var customInstructions = ""
+    @AppStorage(ClickySettings.screenshotModeKey) private var screenshotModeRawValue = ScreenshotMode.allScreens.rawValue
+    @AppStorage(ClickySettings.historyLengthKey) private var historyLength = ClickySettings.defaultHistoryLength
+
+    @State private var voicePreviewSpeaker = SystemTTSClient()
+    @State private var isShowingResetConfirmation = false
+    @State private var historyClearedMessageVisible = false
     @AppStorage(ClickySettings.pushToTalkShortcutKey) private var pushToTalkShortcutJSON = ""
     @AppStorage(ClickySettings.doubleTapKeyKey) private var doubleTapKeyRawValue = DoubleTapModifierKey.control.rawValue
 
@@ -268,11 +288,17 @@ struct SettingsView: View {
                     case .ai:
                         claudeCodeStatusSection
                         aiSection
+                        responsesSection
+                        customInstructionsSection
+                    case .voice:
+                        voiceSection
                     case .cursor:
                         cursorSection
                         windowSection
                     case .shortcuts:
                         shortcutsSection
+                    case .privacy:
+                        privacySection
                     }
                 }
                 .padding(.leading, 16)
@@ -348,6 +374,14 @@ struct SettingsView: View {
                 }
             }
 
+            settingsSection(title: "SOUNDS") {
+                settingsRow(title: "Sound effects", subtitle: "Soft sounds when listening starts and for chat messages.") {
+                    Toggle("", isOn: $soundsEnabled)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+            }
+
             settingsSection(title: "TROUBLESHOOTING") {
                 settingsRow(title: "Logs", subtitle: "What YoClicky did and any errors, in ~/Library/Logs/YoClicky.") {
                     HStack(spacing: 8) {
@@ -357,6 +391,16 @@ struct SettingsView: View {
                             .buttonStyle(GlassButtonStyle())
                     }
                 }
+                settingsRow(title: "Reset all settings", subtitle: "Colors, shortcuts, voice, AI and appearance go back to defaults.") {
+                    Button("Reset…") { isShowingResetConfirmation = true }
+                        .buttonStyle(GlassButtonStyle())
+                }
+            }
+            .alert("Reset all settings?", isPresented: $isShowingResetConfirmation) {
+                Button("Reset", role: .destructive) { companionManager.resetAllPreferences() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Your conversation and permissions are kept.")
             }
         }
     }
@@ -623,6 +667,186 @@ struct SettingsView: View {
             .pointerCursor()
             .help("Reset to default")
         }
+    }
+
+    // MARK: AI responses
+
+    private var responsesSection: some View {
+        settingsSection(title: "RESPONSES") {
+            settingsRow(title: "Model", subtitle: "Haiku is fastest and uses the least of your plan.") {
+                GlassSegmentedControl {
+                    ForEach(companionManager.selectedProvider.modelOptions) { modelOption in
+                        GlassSegment(
+                            label: modelOption.label,
+                            isSelected: companionManager.selectedModel == modelOption.modelID,
+                            action: { companionManager.setSelectedModel(modelOption.modelID) }
+                        )
+                    }
+                }
+            }
+            settingsRow(title: "Style", subtitle: "Caveman gives very short answers and sends less, saving tokens.") {
+                GlassSegmentedControl {
+                    GlassSegment(label: "Normal", isSelected: !companionManager.isCavemanMode,
+                                 action: { companionManager.setCavemanMode(false) })
+                    GlassSegment(label: "Caveman", isSelected: companionManager.isCavemanMode,
+                                 action: { companionManager.setCavemanMode(true) })
+                }
+            }
+            settingsRow(title: "Screenshots", subtitle: "What YoClicky sees with each question. None can't point at things.") {
+                GlassSegmentedControl {
+                    ForEach(ScreenshotMode.allCases) { screenshotMode in
+                        GlassSegment(
+                            label: screenshotMode.displayName,
+                            isSelected: screenshotModeRawValue == screenshotMode.rawValue,
+                            action: { screenshotModeRawValue = screenshotMode.rawValue }
+                        )
+                    }
+                }
+            }
+            settingsRow(title: "Conversation memory", subtitle: "Past exchanges sent with each question. Fewer saves tokens.") {
+                Stepper(value: $historyLength, in: 0...10) {
+                    Text("\(historyLength)")
+                        .font(.system(size: 13, weight: .medium).monospacedDigit())
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .frame(minWidth: 20, alignment: .trailing)
+                }
+            }
+        }
+    }
+
+    private var customInstructionsSection: some View {
+        settingsSection(title: "CUSTOM INSTRUCTIONS") {
+            Text("Told to YoClicky with every question, for example \"I'm an ETH student, keep answers short and explain like a tutor.\"")
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textTertiary)
+            TextEditor(text: $customInstructions)
+                .font(.system(size: 13))
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .frame(height: 90)
+                .glassCard(cornerRadius: 10)
+        }
+    }
+
+    // MARK: Voice
+
+    private var selectedLanguage: AssistantLanguage {
+        AssistantLanguage(rawValue: languageRawValue) ?? .system
+    }
+
+    private var voiceSection: some View {
+        let languageVoices = SystemTTSClient.availableVoices(for: selectedLanguage)
+        let currentVoice = SystemTTSClient.selectedVoice()
+
+        return VStack(alignment: .leading, spacing: 20) {
+            settingsSection(title: "LANGUAGE") {
+                settingsRow(title: "Language", subtitle: "Used for listening, speaking and replies.") {
+                    Picker("", selection: $languageRawValue) {
+                        ForEach(AssistantLanguage.allCases) { language in
+                            Text(language.displayName).tag(language.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 160)
+                    .onChange(of: languageRawValue) { _, _ in ttsVoiceIdentifier = "" }
+                }
+            }
+
+            settingsSection(title: "SPEAKING") {
+                settingsRow(title: "Speak replies", subtitle: "Off shows voice answers in the chat window instead.") {
+                    Toggle("", isOn: $speakReplies)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+                settingsRow(title: "Voice", subtitle: "Download better voices in System Settings > Accessibility > Spoken Content.") {
+                    HStack(spacing: 8) {
+                        Picker("", selection: $ttsVoiceIdentifier) {
+                            Text("Best available").tag("")
+                            ForEach(languageVoices, id: \.identifier) { voice in
+                                Text(voiceMenuLabel(voice)).tag(voice.identifier)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 190)
+
+                        Button(action: { voicePreviewSpeaker.speakPreview(voice: SystemTTSClient.selectedVoice()) }) {
+                            Image(systemName: "play.fill")
+                        }
+                        .buttonStyle(GlassButtonStyle())
+                        .help("Preview \(currentVoice?.name ?? "voice")")
+                    }
+                }
+                settingsRow(title: "Speed", subtitle: "How fast YoClicky talks.") {
+                    HStack(spacing: 8) {
+                        Image(systemName: "tortoise.fill")
+                            .foregroundColor(DS.Colors.textTertiary)
+                        Slider(value: $speechRate, in: 0.35...0.65)
+                            .frame(width: 140)
+                        Image(systemName: "hare.fill")
+                            .foregroundColor(DS.Colors.textTertiary)
+                    }
+                }
+            }
+
+            settingsSection(title: "LISTENING") {
+                settingsRow(title: "On-device recognition", subtitle: "Keeps your voice on this Mac. Turn off for Apple's more accurate servers.") {
+                    Toggle("", isOn: $onDeviceRecognitionOnly)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+            }
+        }
+    }
+
+    private func voiceMenuLabel(_ voice: AVSpeechSynthesisVoice) -> String {
+        switch voice.quality {
+        case .premium: return "\(voice.name) (Premium)"
+        case .enhanced: return "\(voice.name) (Enhanced)"
+        default: return voice.name
+        }
+    }
+
+    // MARK: Privacy
+
+    private var privacySection: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            settingsSection(title: "WHAT GETS SENT") {
+                VStack(alignment: .leading, spacing: 8) {
+                    privacyLine("keyboard", "Only when you hold the talk shortcut or send a chat message. Nothing runs in the background.")
+                    privacyLine("waveform", "Your voice is turned into text by Apple speech recognition, on this Mac when on-device is on.")
+                    privacyLine("photo", "A screenshot (per Settings > AI > Screenshots) and your text go to Claude through Claude Code, using your Claude account.")
+                    privacyLine("externaldrive", "Screenshots aren't saved. Settings and the current conversation stay on this Mac only.")
+                    privacyLine("eye.slash", "No analytics, no tracking, no YoClicky servers.")
+                }
+                .glassCard()
+            }
+
+            settingsSection(title: "CONVERSATION") {
+                settingsRow(title: "Clear conversation", subtitle: "Forget earlier questions and answers, in voice and chat.") {
+                    Button(historyClearedMessageVisible ? "Cleared" : "Clear") {
+                        companionManager.clearConversationHistory()
+                        historyClearedMessageVisible = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { historyClearedMessageVisible = false }
+                    }
+                    .buttonStyle(GlassButtonStyle())
+                }
+            }
+        }
+    }
+
+    private func privacyLine(_ systemImage: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(DS.Colors.accentText)
+                .frame(width: 18)
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundColor(DS.Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
     }
 
     // MARK: Layout helpers

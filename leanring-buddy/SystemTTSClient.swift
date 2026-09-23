@@ -14,27 +14,48 @@ import Foundation
 final class SystemTTSClient {
     private let synthesizer = AVSpeechSynthesizer()
 
-    /// Prefer the highest-quality installed English voice. Premium/enhanced
-    /// voices can be downloaded in System Settings > Accessibility > Spoken Content.
-    /// Override with the `ttsVoiceIdentifier` user default.
-    private lazy var voice: AVSpeechSynthesisVoice? = {
-        if let voiceIdentifier = UserDefaults.standard.string(forKey: "ttsVoiceIdentifier"),
-           let overrideVoice = AVSpeechSynthesisVoice(identifier: voiceIdentifier) {
-            return overrideVoice
+    /// Installed voices for a language, best quality first (Premium, Enhanced, then default).
+    /// More voices can be downloaded in System Settings > Accessibility > Spoken Content.
+    static func availableVoices(for language: AssistantLanguage) -> [AVSpeechSynthesisVoice] {
+        let languagePrefix = language.languageCode
+        return AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language.hasPrefix(languagePrefix) }
+            .sorted { firstVoice, secondVoice in
+                if firstVoice.quality != secondVoice.quality {
+                    return firstVoice.quality.rawValue > secondVoice.quality.rawValue
+                }
+                return firstVoice.name < secondVoice.name
+            }
+    }
+
+    /// The voice picked in Settings > Voice if it matches the chosen language,
+    /// otherwise the best installed voice for that language.
+    static func selectedVoice() -> AVSpeechSynthesisVoice? {
+        let language = ClickySettings.language
+        if let voiceIdentifier = UserDefaults.standard.string(forKey: ClickySettings.ttsVoiceIdentifierKey),
+           let chosenVoice = AVSpeechSynthesisVoice(identifier: voiceIdentifier),
+           chosenVoice.language.hasPrefix(language.languageCode) {
+            return chosenVoice
         }
-        let englishVoices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == "en-US" }
-        return englishVoices.first(where: { $0.quality == .premium })
-            ?? englishVoices.first(where: { $0.quality == .enhanced })
-            ?? AVSpeechSynthesisVoice(language: "en-US")
-    }()
+        return availableVoices(for: language).first ?? AVSpeechSynthesisVoice(language: language.locale.identifier)
+    }
 
     /// Starts speaking `text` and returns once playback has begun.
     func speakText(_ text: String) async throws {
         try Task.checkCancellation()
-        stopPlayback()
+        speak(text, voice: Self.selectedVoice())
+    }
 
+    /// Speaks a sample sentence with a specific voice (Settings > Voice preview).
+    func speakPreview(voice: AVSpeechSynthesisVoice?) {
+        speak("hey, i'm yoclicky. this is how i sound.", voice: voice)
+    }
+
+    private func speak(_ text: String, voice: AVSpeechSynthesisVoice?) {
+        stopPlayback()
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = voice
+        utterance.rate = Float(ClickySettings.speechRate)
         synthesizer.speak(utterance)
         print("🔊 System TTS: speaking with \(voice?.name ?? "default voice")")
     }

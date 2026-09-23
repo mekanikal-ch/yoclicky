@@ -42,8 +42,9 @@ final class AppleSpeechTranscriptionProvider: BuddyTranscriptionProvider {
     }
 
     private static func makeBestAvailableSpeechRecognizer() -> SFSpeechRecognizer? {
+        // Language chosen in Settings > Voice, falling back to US English.
         let preferredLocales = [
-            Locale.autoupdatingCurrent,
+            ClickySettings.language.locale,
             Locale(identifier: "en-US")
         ]
 
@@ -87,7 +88,9 @@ private final class AppleSpeechTranscriptionSession: NSObject, BuddyStreamingTra
         recognitionRequest.taskHint = .dictation
         recognitionRequest.addsPunctuation = true
 
-        if speechRecognizer.supportsOnDeviceRecognition {
+        // On-device keeps audio on this Mac (Settings > Voice); Apple's servers
+        // can be more accurate for some languages.
+        if speechRecognizer.supportsOnDeviceRecognition && ClickySettings.onDeviceRecognitionOnly {
             recognitionRequest.requiresOnDeviceRecognition = true
         }
 

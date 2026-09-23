@@ -104,7 +104,25 @@ final class CompanionManager: ObservableObject {
     }
 
     func toggleTextChat() {
+        if !textChatWindowManager.isVisible {
+            ClickySound.chatOpened.play()
+        }
         textChatWindowManager.toggle(companionManager: self)
+    }
+
+    /// Clears the conversation shared by voice and text chat (Settings > Privacy).
+    func clearConversationHistory() {
+        clearTextChat()
+    }
+
+    /// Restores every preference to its default (Settings > General).
+    func resetAllPreferences() {
+        ClickySettings.resetAllPreferences()
+        isCavemanMode = false
+        selectedProvider = AIProviderSettings.selectedProvider
+        selectedModel = AIProviderSettings.selectedModel(for: selectedProvider)
+        setClickyCursorEnabled(true)
+        prewarmAIClient()
     }
 
     func clearTextChat() {
@@ -117,6 +135,7 @@ final class CompanionManager: ObservableObject {
     /// voice, but shows the reply in the chat window instead of speaking it.
     func sendTextChatMessage(_ message: String) {
         textChatMessages.append(TextChatMessage(role: .user, text: message))
+        ClickySound.messageSent.play()
         sendTranscriptToClaudeWithScreenshot(transcript: message, isFromTextChat: true)
     }
 
@@ -169,8 +188,7 @@ final class CompanionManager: ObservableObject {
     /// Starts a spare AI process for the current model + style so the next
     /// question skips the CLI's startup time.
     private func prewarmAIClient() {
-        let systemPrompt = isCavemanMode ? Self.cavemanVoiceResponseSystemPrompt : Self.companionVoiceResponseSystemPrompt
-        makeAIClient().prewarm(systemPrompt: systemPrompt)
+        makeAIClient().prewarm(systemPrompt: Self.composedSystemPrompt(useCavemanMode: isCavemanMode))
     }
 
     /// Caveman mode trades detail for fewer tokens: short system prompt, terse
@@ -572,6 +590,7 @@ final class CompanionManager: ObservableObject {
     
 
             ClickyAnalytics.trackPushToTalkStarted()
+            ClickySound.listeningStarted.play()
 
             pendingKeyboardShortcutStartTask?.cancel()
             pendingKeyboardShortcutStartTask = Task {
@@ -639,6 +658,20 @@ final class CompanionManager: ObservableObject {
     - element is on screen 2 (not where cursor is): "that's over on your other monitor — see the terminal window? [POINT:400,300:terminal:screen2]"
     """
 
+    /// The companion prompt plus the user's language and custom instructions
+    /// (Settings > Voice and Settings > AI).
+    static func composedSystemPrompt(useCavemanMode: Bool) -> String {
+        var systemPrompt = useCavemanMode ? cavemanVoiceResponseSystemPrompt : companionVoiceResponseSystemPrompt
+        if let replyInstruction = ClickySettings.language.replyInstruction {
+            systemPrompt += "\n\nlanguage: \(replyInstruction)"
+        }
+        let customInstructions = ClickySettings.customInstructions
+        if !customInstructions.isEmpty {
+            systemPrompt += "\n\nthe user's own instructions (follow them unless they conflict with the rules above):\n\(customInstructions)"
+        }
+        return systemPrompt
+    }
+
     /// Token-saving variant of the companion prompt used in caveman mode.
     private static let cavemanVoiceResponseSystemPrompt = """
     you're yoclicky, voice companion. you see user's screen. reply is spoken aloud.
@@ -683,14 +716,24 @@ final class CompanionManager: ObservableObject {
             voiceState = .processing
 
             let useCavemanMode = isCavemanMode
+            // Settings > AI > Screenshots. Caveman mode never sends more than the cursor screen.
+            var screenshotMode = ClickySettings.screenshotMode
+            if useCavemanMode && screenshotMode == .allScreens {
+                screenshotMode = .cursorScreen
+            }
 
             do {
-                // Capture all connected screens so the AI has full context.
-                // Caveman mode sends only the cursor screen at a smaller size (~900 vs ~1400 image tokens each).
-                let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(
-                    maxDimension: useCavemanMode ? 1024 : 1280,
-                    onlyCursorScreen: useCavemanMode
-                )
+                // Capture the screen(s) so the AI has context. Caveman mode uses a
+                // smaller size (~900 vs ~1400 image tokens each).
+                let screenCaptures: [CompanionScreenCapture]
+                if screenshotMode == .none {
+                    screenCaptures = []
+                } else {
+                    screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(
+                        maxDimension: useCavemanMode ? 1024 : 1280,
+                        onlyCursorScreen: screenshotMode == .cursorScreen
+                    )
+                }
 
                 guard !Task.isCancelled else { return }
 
@@ -703,14 +746,15 @@ final class CompanionManager: ObservableObject {
                 }
 
                 // Pass conversation history so Claude remembers prior exchanges
-                // (caveman mode keeps only the last 3 to save tokens)
-                let historyForAPI = conversationHistory.suffix(useCavemanMode ? 3 : 10).map { entry in
+                // (Settings > AI; caveman mode keeps at most 3 to save tokens)
+                let historyLength = useCavemanMode ? min(3, ClickySettings.historyLength) : ClickySettings.historyLength
+                let historyForAPI = conversationHistory.suffix(historyLength).map { entry in
                     (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
                 }
 
                 let (fullResponseText, _) = try await makeAIClient().analyzeImageStreaming(
                     images: labeledImages,
-                    systemPrompt: useCavemanMode ? Self.cavemanVoiceResponseSystemPrompt : Self.companionVoiceResponseSystemPrompt,
+                    systemPrompt: Self.composedSystemPrompt(useCavemanMode: useCavemanMode),
                     conversationHistory: historyForAPI,
                     userPrompt: transcript,
                     onTextChunk: { [weak self] accumulatedText in
@@ -798,8 +842,18 @@ final class CompanionManager: ObservableObject {
 
                 ClickyAnalytics.trackAIResponseReceived(response: spokenText)
 
+                let isSpokenReplyOff = !isFromTextChat && !ClickySettings.speakReplies
                 if isFromTextChat {
                     updatePendingTextChatReply(text: spokenText, isPending: false)
+                    ClickySound.replyReceived.play()
+                } else if isSpokenReplyOff {
+                    // Settings > Voice > Speak replies is off: show the exchange in the chat window instead.
+                    textChatMessages.append(TextChatMessage(role: .user, text: transcript))
+                    textChatMessages.append(TextChatMessage(role: .assistant, text: spokenText))
+                    if !textChatWindowManager.isVisible {
+                        textChatWindowManager.show(companionManager: self)
+                    }
+                    ClickySound.replyReceived.play()
                 } else if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     do {
                         try await ttsClient.speakText(spokenText)

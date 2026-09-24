@@ -30,9 +30,20 @@ xcodebuild -project leanring-buddy.xcodeproj -scheme leanring-buddy \
   -configuration Release -derivedDataPath "$BUILD_DIR/derived" \
   ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
   CODE_SIGNING_ALLOWED=NO \
+  ENABLE_CODE_COVERAGE=NO CLANG_COVERAGE_MAPPING=NO \
+  DEPLOYMENT_POSTPROCESSING=YES STRIP_INSTALLED_PRODUCT=YES \
+  OTHER_SWIFT_FLAGS="\$(inherited) -file-prefix-map $PWD=." \
   build | grep -E "error:|BUILD (SUCCEEDED|FAILED)"
 
 BUILT_APP="$BUILD_DIR/derived/Build/Products/Release/$APP_NAME.app"
+
+# Coverage instrumentation (on by default in the scheme xcodebuild generates)
+# embeds absolute source paths, which contain the builder's macOS username.
+# Refuse to ship a binary that still has any path from this Mac in it.
+if LC_ALL=C grep -a -q "$HOME/" "$BUILT_APP/Contents/MacOS/$APP_NAME"; then
+  echo "error: the app binary contains paths from $HOME; not packaging it" >&2
+  exit 1
+fi
 VERSION="${1:-$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$BUILT_APP/Contents/Info.plist")}"
 
 rm -rf "$STAGING_DIR"

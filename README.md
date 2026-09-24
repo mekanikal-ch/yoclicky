@@ -59,9 +59,7 @@ HeyClicky routes everything through its own servers and charges a subscription. 
 
 1. Download `YoClicky-x.y.dmg` from the [latest release](https://github.com/mekanikal-ch/yoclicky/releases/latest).
 2. Open it and drag **YoClicky** into **Applications**.
-3. Open YoClicky from Applications.
-   <!-- Remove this step once releases are notarized. -->
-   YoClicky isn't notarized by Apple yet, so macOS will say it can't verify the developer. Click **Done**, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**. You only do this once.
+3. Open YoClicky from Applications. The first time, macOS blocks it (see [First launch](#first-launch-open-anyway) below).
 4. Click the YoClicky icon in the menu bar and grant the four permissions it asks for:
    - **Microphone** and **Speech Recognition**, to hear you
    - **Screen Recording**, to see your screen when you ask something
@@ -69,6 +67,19 @@ HeyClicky routes everything through its own servers and charges a subscription. 
 5. Click **Start**. That's it.
 
 In **Settings → AI → Test Connection** you can check that YoClicky reaches Claude with your account.
+
+### First launch: "Open Anyway"
+
+<!-- Remove this section once releases are notarized. -->
+YoClicky is free and not notarized by Apple (that costs $99 a year), so the first time you open it macOS says it "could not verify" the app. That's expected. You only do this once:
+
+1. Click **Done** in the warning (not "Move to Trash").
+2. Open **System Settings → Privacy & Security** and scroll down to **Security**.
+3. Next to *"YoClicky" was blocked*, click **Open Anyway**, then confirm with your password or Touch ID.
+
+Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/YoClicky.app`, then open it normally.
+
+The code is all here, and you can [build it yourself](#build-from-source) if you'd rather not trust a download.
 
 ## Shortcuts
 

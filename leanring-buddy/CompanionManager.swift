@@ -59,11 +59,12 @@ final class CompanionManager: ObservableObject {
     // Response text is now displayed inline on the cursor overlay via
     // streamingResponseText, so no separate response overlay manager is needed.
 
-    /// Builds a client for the selected AI provider and model. Claude goes through
-    /// the locally installed Claude Code CLI, logged in with the user's own Claude
+    /// Builds a client for the selected AI provider with the model and effort
+    /// ResponseRouter picked for this question. Claude goes through the locally
+    /// installed Claude Code CLI, logged in with the user's own Claude
     /// subscription (no proxy, no API key). See AIProvider.swift for other providers.
-    private func makeAIClient() -> AIProviderClient {
-        selectedProvider.makeClient(model: selectedModel)
+    private func makeAIClient(for responsePlan: ResponsePlan) -> AIProviderClient {
+        selectedProvider.makeClient(model: responsePlan.modelAlias, effort: responsePlan.effort)
     }
 
     /// Speech uses the built-in macOS voices (no TTS key needed).
@@ -182,10 +183,13 @@ final class CompanionManager: ObservableObject {
         prewarmAIClient()
     }
 
-    /// Starts a spare AI process for the current model + style so the next
-    /// question skips the CLI's startup time.
+    /// Starts spare AI processes for the current model + style (with "Auto",
+    /// one for Sonnet and one for Opus) so the next question skips the CLI's startup time.
     private func prewarmAIClient() {
-        makeAIClient().prewarm(systemPrompt: Self.composedSystemPrompt(useCavemanMode: isCavemanMode))
+        selectedProvider.prewarm(
+            plans: ResponseRouter.plansToPrewarm(selectedModelID: selectedModel, useCavemanMode: isCavemanMode),
+            systemPrompt: Self.composedSystemPrompt(useCavemanMode: isCavemanMode)
+        )
     }
 
     /// Caveman mode trades detail for fewer tokens: short system prompt, terse
@@ -562,28 +566,38 @@ final class CompanionManager: ObservableObject {
     // MARK: - Companion Prompt
 
     private static let companionVoiceResponseSystemPrompt = """
-    you're yoclicky, a friendly always-on companion that lives in the user's menu bar. the user just spoke to you via push-to-talk and you can see their screen(s). your reply will be spoken aloud via text-to-speech, so write the way you'd actually talk. this is an ongoing conversation — you remember everything they've said before.
+    you're yoclicky, a companion that lives in the user's menu bar. the user just asked you something with push-to-talk (or typed it in the chat window) and you can see their screen. your reply is usually spoken aloud by a text-to-speech voice, so write the way a sharp, friendly expert talks. this is an ongoing conversation, earlier exchanges are included when there are any.
 
-    rules:
-    - default to one or two sentences. be direct and dense. BUT if the user asks you to explain more, go deeper, or elaborate, then go all out — give a thorough, detailed explanation with no length limit.
-    - all lowercase, casual, warm. no emojis.
-    - write for the ear, not the eye. short sentences. no lists, bullet points, markdown, or formatting — just natural speech.
-    - don't use abbreviations or symbols that sound weird read aloud. write "for example" not "e.g.", spell out small numbers.
-    - if the user's question relates to what's on their screen, reference specific things you see.
-    - if the screenshot doesn't seem relevant to their question, just answer the question directly.
-    - you can help with anything — coding, writing, general knowledge, brainstorming.
-    - never say "simply" or "just".
-    - don't read out code verbatim. describe what the code does or what needs to change conversationally.
-    - focus on giving a thorough, useful explanation. don't end with simple yes/no questions like "want me to explain more?" or "should i show you?" — those are dead ends that force the user to just say yes.
-    - instead, when it fits naturally, end by planting a seed — mention something bigger or more ambitious they could try, a related concept that goes deeper, or a next-level technique that builds on what you just explained. make it something worth coming back for, not a question they'd just nod to. it's okay to not end with anything extra if the answer is complete on its own.
-    - if you receive multiple screen images, the one labeled "primary focus" is where the cursor is — prioritize that one but reference others if relevant.
+    how to answer:
+    - get it right first. read the screen carefully: exact labels, numbers, error messages, file names. base your answer on what's actually there, not on what's usually there.
+    - lead with the answer in your first sentence. no preamble, don't restate the question.
+    - match the length to the question. a quick fact or "where is it": one sentence. a how-to: the steps in order, in two to four sentences. a "why" or a concept: a clear explanation in three to five sentences, with one concrete example when it helps. if they ask for more detail, go as deep as they need.
+    - be specific. name the exact button, menu, value or line you mean, like "the blue export button top right", not "the button".
+    - for math, dates, times, money or units, work it out carefully and double-check the arithmetic before you answer. give the final result clearly.
+    - the question comes from speech recognition and may contain misheard words. if something sounds odd, use the screen and the conversation to work out what they meant, and answer that.
+    - if you're unsure or can't see something, say so in a few words and say what would help. never invent numbers, names, prices or facts. for things that change often, like prices, news or software versions, say your information may be out of date.
+    - if the screenshot isn't relevant to the question, answer directly without mentioning it.
+    - if a question is ambiguous, answer the most likely meaning. mention the other one only if it matters.
+    - you can help with anything: coding, writing, studying, general knowledge, brainstorming.
+
+    how it should sound:
+    - all lowercase, casual and warm. no emojis. never say "simply" or "just".
+    - write for the ear: plain sentences. no lists, bullet points, markdown, headings or asterisks.
+    - say symbols as words: "for example" not "e.g.", "percent" not "%", "command shift four" not the key symbols. numbers can stay as digits.
+    - don't read code out verbatim. describe what it does or what to change, and name the function or variable when that helps.
+    - stop when the answer is complete. no filler like "hope that helps", and don't end with questions like "want me to explain more?". add one short next step only when it's genuinely useful.
+
+    what you get:
+    - one screenshot per screen. with several screens, the one labeled "primary focus" is where the cursor is, prioritize it but use the others if relevant.
+    - often a sharp close-up of the area around the mouse cursor, for reading small text. use it to read, but never for pointing coordinates.
+    - sometimes text context before the question: the app and window they're in, text they've selected (when there is some, the question is very likely about it), the date and time, facts you remember about them, or an open document.
 
     element pointing:
     you have a small blue triangle cursor that can fly to and point at things on screen. use it whenever pointing would genuinely help the user — if they're asking how to do something, looking for a menu, trying to find a button, or need help navigating an app, point at the relevant element. err on the side of pointing rather than not pointing, because it makes your help way more useful and concrete.
 
     don't point at things when it would be pointless — like if the user asks a general knowledge question, or the conversation has nothing to do with what's on screen, or you'd just be pointing at something obvious they're already looking at. but if there's a specific UI element, menu, button, or area on screen that's relevant to what you're helping with, point at it.
 
-    when you point, append a coordinate tag at the very end of your response, AFTER your spoken text. the screenshot images are labeled with their pixel dimensions. use those dimensions as the coordinate space. the origin (0,0) is the top-left corner of the image. x increases rightward, y increases downward.
+    when you point, append a coordinate tag at the very end of your response, AFTER your spoken text. the full screenshot images are labeled with their pixel dimensions (never use the close-up for coordinates). use those dimensions as the coordinate space. the origin (0,0) is the top-left corner of the image. x increases rightward, y increases downward.
 
     format: [POINT:x,y:label] where x,y are integer pixel coordinates in the screenshot's coordinate space, and label is a short 1-3 word description of the element (like "search bar" or "save button"). if the element is on the cursor's screen you can omit the screen number. if the element is on a DIFFERENT screen, append :screenN where N is the screen number from the image label (e.g. :screen2). this is important — without the screen number, the cursor will point at the wrong place.
 
@@ -591,7 +605,7 @@ final class CompanionManager: ObservableObject {
 
     examples:
     - user asks how to color grade in final cut: "you'll want to open the color inspector — it's right up in the top right area of the toolbar. click that and you'll get all the color wheels and curves. [POINT:1100,42:color inspector]"
-    - user asks what html is: "html stands for hypertext markup language, it's basically the skeleton of every web page. curious how it connects to the css you're looking at? [POINT:none]"
+    - user asks what html is: "html is the markup that gives every web page its structure, the headings, paragraphs and links. the css file you have open is what styles it, colors, spacing and layout. [POINT:none]"
     - user asks how to commit in xcode: "see that source control menu up top? click that and hit commit, or you can use command option c as a shortcut. [POINT:285,11:source control]"
     - element is on screen 2 (not where cursor is): "that's over on your other monitor — see the terminal window? [POINT:400,300:terminal:screen2]"
     """
@@ -620,9 +634,39 @@ final class CompanionManager: ObservableObject {
     static func userPromptWithContext(
         question: String,
         documentApplication: NSRunningApplication?,
-        useCavemanMode: Bool
+        useCavemanMode: Bool,
+        isFromTextChat: Bool
     ) async -> String {
         var contextBlocks: [String] = []
+
+        // Exact text about what the user is doing (Settings > AI > App context).
+        if let documentApplication {
+            var screenContextLines = ["right now: \(ScreenContextReader.currentDateDescription())"]
+            if ClickySettings.appContextEnabled {
+                let maxSelectedTextCharacters = useCavemanMode ? 2_000 : 8_000
+                let screenContext = await Task.detached(priority: .userInitiated) {
+                    ScreenContextReader.read(from: documentApplication, maxSelectedTextCharacters: maxSelectedTextCharacters)
+                }.value
+                if let applicationName = screenContext.applicationName {
+                    screenContextLines.append("app in front: \(applicationName)")
+                }
+                if let windowTitle = screenContext.windowTitle {
+                    screenContextLines.append("window title: \(windowTitle)")
+                }
+                if let selectedText = screenContext.selectedText {
+                    let truncationNote = screenContext.selectedTextWasTruncated ? " (only the beginning, it's long)" : ""
+                    screenContextLines.append("""
+                    text the user has selected\(truncationNote):
+                    <<<
+                    \(selectedText)
+                    >>>
+                    """)
+                }
+            }
+            contextBlocks.append(screenContextLines.joined(separator: "\n"))
+        } else {
+            contextBlocks.append("right now: \(ScreenContextReader.currentDateDescription())")
+        }
 
         if ClickySettings.memoryEnabled, let memoryContext = MemoryStore.shared.promptContext {
             contextBlocks.append(memoryContext)
@@ -646,8 +690,11 @@ final class CompanionManager: ObservableObject {
             }
         }
 
-        guard !contextBlocks.isEmpty else { return question }
-        return contextBlocks.joined(separator: "\n\n") + "\n\nthe user's question: \(question)"
+        // Kept here rather than in the system prompt, so voice and chat share one warm process.
+        let replyChannelNote = isFromTextChat
+            ? "they typed this in the chat window, so your reply is shown as text, not spoken (still no markdown)"
+            : "they said this out loud, so your reply will be spoken"
+        return contextBlocks.joined(separator: "\n\n") + "\n\n(\(replyChannelNote))\nthe user's question: \(question)"
     }
 
     /// Token-saving variant of the companion prompt used in caveman mode.
@@ -695,6 +742,16 @@ final class CompanionManager: ObservableObject {
             voiceState = .processing
 
             let useCavemanMode = isCavemanMode
+            // Model + effort for this question (Settings > AI > Model; "Auto" routes per question)
+            let includesOpenDocument = ClickySettings.documentReadingEnabled
+                && OpenDocumentReader.isQuestionAboutDocument(transcript)
+            let responsePlan = ResponseRouter.plan(
+                question: transcript,
+                selectedModelID: selectedModel,
+                useCavemanMode: useCavemanMode,
+                includesOpenDocument: includesOpenDocument
+            )
+            print("🧭 Route: \(responsePlan.route.rawValue) → \(responsePlan.modelAlias), effort \(responsePlan.effort)")
             // Settings > AI > Screenshots. Caveman mode never sends more than the cursor screen.
             var screenshotMode = ClickySettings.screenshotMode
             if useCavemanMode && screenshotMode == .allScreens {
@@ -702,16 +759,24 @@ final class CompanionManager: ObservableObject {
             }
 
             do {
-                // Capture the screen(s) so the AI has context. Caveman mode uses a
-                // smaller size (~900 vs ~1400 image tokens each).
+                // Capture the screen(s) so the AI has context. Sonnet and Opus read
+                // sharper screenshots (~3,000 image tokens each) than Haiku (~1,300);
+                // caveman mode uses a smaller size to save tokens.
                 let screenCaptures: [CompanionScreenCapture]
+                var cursorCloseUpImageData: Data?
                 if screenshotMode == .none {
                     screenCaptures = []
                 } else {
+                    // Plus a sharp close-up around the cursor for reading small text (~1,000 tokens).
+                    async let closeUpCapture: Data? = useCavemanMode
+                        ? nil
+                        : try? CompanionScreenCaptureUtility.captureCursorCloseUpAsJPEG()
                     screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(
-                        maxDimension: useCavemanMode ? 1024 : 1280,
+                        maxDimension: responsePlan.screenshotMaxLongEdge(useCavemanMode: useCavemanMode),
+                        maxVisualTokens: responsePlan.maxVisualTokensPerImage,
                         onlyCursorScreen: screenshotMode == .cursorScreen
                     )
+                    cursorCloseUpImageData = await closeUpCapture
                 }
 
                 guard !Task.isCancelled else { return }
@@ -719,9 +784,15 @@ final class CompanionManager: ObservableObject {
                 // Build image labels with the actual screenshot pixel dimensions
                 // so Claude's coordinate space matches the image it sees. We
                 // scale from screenshot pixels to display points ourselves.
-                let labeledImages = screenCaptures.map { capture in
+                var labeledImages = screenCaptures.map { capture in
                     let dimensionInfo = " (image dimensions: \(capture.screenshotWidthInPixels)x\(capture.screenshotHeightInPixels) pixels)"
                     return (data: capture.imageData, label: capture.label + dimensionInfo)
+                }
+                if let cursorCloseUpImageData {
+                    labeledImages.append((
+                        data: cursorCloseUpImageData,
+                        label: "close-up of the area around the mouse cursor, sharper, for reading small text. not for [POINT] coordinates."
+                    ))
                 }
 
                 // Pass conversation history so Claude remembers prior exchanges
@@ -734,11 +805,12 @@ final class CompanionManager: ObservableObject {
                 let userPromptWithContext = await Self.userPromptWithContext(
                     question: transcript,
                     documentApplication: frontmostApplicationTracker.lastExternalApplication,
-                    useCavemanMode: useCavemanMode
+                    useCavemanMode: useCavemanMode,
+                    isFromTextChat: isFromTextChat
                 )
                 guard !Task.isCancelled else { return }
 
-                let (fullResponseText, _) = try await makeAIClient().analyzeImageStreaming(
+                let (fullResponseText, _) = try await makeAIClient(for: responsePlan).analyzeImageStreaming(
                     images: labeledImages,
                     systemPrompt: Self.composedSystemPrompt(useCavemanMode: useCavemanMode),
                     conversationHistory: historyForAPI,
@@ -1081,7 +1153,8 @@ final class CompanionManager: ObservableObject {
                 let dimensionInfo = " (image dimensions: \(cursorScreenCapture.screenshotWidthInPixels)x\(cursorScreenCapture.screenshotHeightInPixels) pixels)"
                 let labeledImages = [(data: cursorScreenCapture.imageData, label: cursorScreenCapture.label + dimensionInfo)]
 
-                let (fullResponseText, _) = try await makeAIClient().analyzeImageStreaming(
+                let onboardingPlan = ResponseRouter.plan(for: .standard, selectedModelID: selectedModel, useCavemanMode: false)
+                let (fullResponseText, _) = try await makeAIClient(for: onboardingPlan).analyzeImageStreaming(
                     images: labeledImages,
                     systemPrompt: Self.onboardingDemoSystemPrompt,
                     conversationHistory: [],

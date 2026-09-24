@@ -7,7 +7,7 @@
 //
 //  To add a provider:
 //    1. Write a client that conforms to `AIProviderClient` (see ClaudeCodeCLI).
-//    2. Return it from `makeClient(model:)` below.
+//    2. Return it from `makeClient(model:effort:)` below.
 //    3. Set `isAvailable` to true and fill in its model options.
 //
 
@@ -83,10 +83,13 @@ enum AIProvider: String, CaseIterable, Identifiable {
     var modelOptions: [AIModelOption] {
         switch self {
         case .claude:
+            // CLI aliases: each always runs the newest model of that family.
+            // "Auto" picks Sonnet or Opus per question (ResponseRouter).
             return [
-                AIModelOption(label: "Haiku", modelID: "claude-haiku-4-5"),
-                AIModelOption(label: "Sonnet", modelID: "claude-sonnet-4-6"),
-                AIModelOption(label: "Opus", modelID: "claude-opus-4-6")
+                AIModelOption(label: "Auto", modelID: ResponseRouter.autoModelID),
+                AIModelOption(label: "Haiku", modelID: "haiku"),
+                AIModelOption(label: "Sonnet", modelID: "sonnet"),
+                AIModelOption(label: "Opus", modelID: "opus")
             ]
         case .chatGPT, .gemini, .grok, .metaLlama, .localOllama:
             return []
@@ -95,18 +98,31 @@ enum AIProvider: String, CaseIterable, Identifiable {
 
     var defaultModelID: String {
         switch self {
-        case .claude: return "claude-sonnet-4-6"
+        case .claude: return ResponseRouter.autoModelID
         default: return modelOptions.first?.modelID ?? ""
         }
     }
 
     /// Builds the client used for one request. Only called for available providers.
-    func makeClient(model: String) -> AIProviderClient {
+    func makeClient(model: String, effort: String) -> AIProviderClient {
         switch self {
         case .claude:
-            return ClaudeCodeCLI(model: model)
+            return ClaudeCodeCLI(model: model, effort: effort)
         case .chatGPT, .gemini, .grok, .metaLlama, .localOllama:
             preconditionFailure("\(displayName) is not implemented yet")
+        }
+    }
+
+    /// Starts processes ahead of time for the plans a next question will likely use.
+    func prewarm(plans: [ResponsePlan], systemPrompt: String) {
+        switch self {
+        case .claude:
+            ClaudeCodeCLI.prewarm(
+                configurations: plans.map { (model: $0.modelAlias, effort: $0.effort) },
+                systemPrompt: systemPrompt
+            )
+        case .chatGPT, .gemini, .grok, .metaLlama, .localOllama:
+            break
         }
     }
 }
@@ -133,7 +149,15 @@ enum AIProviderSettings {
     }
 
     static func selectedModel(for provider: AIProvider) -> String {
-        UserDefaults.standard.string(forKey: modelKey(for: provider)) ?? provider.defaultModelID
+        guard let storedModel = UserDefaults.standard.string(forKey: modelKey(for: provider)) else {
+            return provider.defaultModelID
+        }
+        // Older versions stored full IDs like "claude-sonnet-4-6"; map them to
+        // the alias options so the picker still shows the choice.
+        if provider == .claude && !provider.modelOptions.contains(where: { $0.modelID == storedModel }) {
+            return ClaudeCodeCLI.modelAlias(for: storedModel)
+        }
+        return storedModel
     }
 
     static func setSelectedModel(_ model: String, for provider: AIProvider) {

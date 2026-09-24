@@ -36,11 +36,12 @@ HeyClicky routes everything through its own servers and charges a subscription. 
 ## Features
 
 - **Ask about your screen.** Hold `control + option`, speak, release. YoClicky looks at your screen, answers out loud, and points at what it means.
+- **Picks the right model.** Auto mode sends everyday questions to Sonnet and math, code and "why" questions to Opus. It reads small text through a sharp close-up of the area around your cursor, and uses the exact text you've selected.
 - **Text chat.** Double-tap `control` for a chat window, when you can't talk.
 - **Dictation anywhere.** Hold `control + shift` and speak: your words are typed into whatever text field you're in. Uses no tokens.
 - **Reads the whole document.** Ask "summarize this PDF" and it reads the entire file open in Preview, TextEdit, Xcode, Word…, not just what's visible.
 - **Memory.** Tell it something once ("I study at ETH") and it remembers it between sessions. You can view and delete every memory.
-- **Saves tokens.** Caveman style (very short answers), Haiku / Sonnet / Opus, choose what screenshots to send and how much history.
+- **Saves tokens.** Caveman style (very short answers), Auto / Haiku / Sonnet / Opus, choose what screenshots to send and how much history.
 - **Your language.** Listens, speaks and answers in English, French, German, Spanish and more, with any macOS voice.
 - **Liquid Glass design,** custom cursor color, hide-until-needed cursor, custom shortcuts.
 
@@ -103,7 +104,7 @@ you speak ──► Apple speech recognition (on your Mac)
 YoClicky is free. It needs a Claude Pro or Max plan, which you may already have. It uses that plan instead of a second subscription.
 
 **How much of my Claude plan does it use?**
-A question is roughly 2,500 tokens with a screenshot, or about half that in Caveman style with Haiku. Settings → AI explains what each option costs.
+A question is roughly 5,000 tokens with a screenshot and the cursor close-up, or about 1,500 in Caveman style. Questions Auto sends to Opus use your plan faster than Sonnet. Settings → AI explains what each option costs.
 
 **Is it affiliated with Anthropic or HeyClicky?**
 No. It's an independent open-source project built on the MIT-licensed original Clicky. It uses Anthropic's official Claude Code CLI; please follow [Anthropic's usage policies and terms](https://www.anthropic.com/legal) for your plan.

@@ -257,6 +257,7 @@ struct SettingsView: View {
     @AppStorage(ClickySettings.historyLengthKey) private var historyLength = ClickySettings.defaultHistoryLength
     @AppStorage(ClickySettings.dictationShortcutKey) private var dictationShortcutJSON = ""
     @AppStorage(ClickySettings.documentReadingKey) private var documentReadingEnabled = true
+    @AppStorage(ClickySettings.appContextEnabledKey) private var appContextEnabled = true
     @AppStorage(ClickySettings.memoryEnabledKey) private var memoryEnabled = true
     @ObservedObject private var memoryStore = MemoryStore.shared
 
@@ -719,7 +720,7 @@ struct SettingsView: View {
             }
             settingsRow(title: "Style", subtitle: companionManager.isCavemanMode
                 ? "Caveman: one-line answers, a smaller screenshot of the cursor screen only and the last 3 exchanges. About half the tokens."
-                : "Normal: friendly one-to-two sentence answers, going deeper when you ask.") {
+                : "Normal: answers sized to the question, one sentence for a quick fact, a few for a how-to or a \"why\", deeper when you ask.") {
                 GlassSegmentedControl {
                     GlassSegment(label: "Normal", isSelected: !companionManager.isCavemanMode,
                                  action: { companionManager.setCavemanMode(false) })
@@ -755,26 +756,36 @@ struct SettingsView: View {
                     .toggleStyle(.switch)
                     .labelsHidden()
             }
+            settingsRow(title: "App context", subtitle: appContextEnabled
+                ? "On: sends the app's name, its window title and any text you've selected, so answers about a selection use the exact words."
+                : "Off: only the app's name and the date are sent with the screenshot.") {
+                Toggle("", isOn: $appContextEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
         }
     }
 
     private var modelDescription: String {
         let selectedModelID = companionManager.selectedModel.lowercased()
+        if selectedModelID == ResponseRouter.autoModelID {
+            return "Auto: Sonnet for everyday questions, Opus for math, code and \"why\" questions, with extra thinking when you ask for detail. Uses more of your plan than Sonnet alone."
+        }
         if selectedModelID.contains("haiku") {
-            return "Haiku: fastest and uses the least of your plan. Great for \"where is…\" questions."
+            return "Haiku: fastest and uses the least of your plan, but weaker at math and at reading small text."
         }
         if selectedModelID.contains("opus") {
-            return "Opus: smartest but slowest, and uses up your plan fastest."
+            return "Opus: most accurate, about a second slower, and uses up your plan fastest."
         }
-        return "Sonnet: balanced, smart and fairly fast. A good default."
+        return "Sonnet: fast and smart, but less reliable at mental math than Opus."
     }
 
     private var screenshotDescription: String {
         switch ScreenshotMode(rawValue: screenshotModeRawValue) ?? .allScreens {
         case .allScreens:
-            return "All screens: YoClicky sees every monitor (about 1,400 tokens each)."
+            return "All screens: YoClicky sees every monitor, sharp enough to read small text (about 3,000 tokens each), plus a close-up around your cursor."
         case .cursorScreen:
-            return "Cursor screen: only the screen your mouse is on. Cheaper with several monitors."
+            return "Cursor screen: only the screen your mouse is on, plus a close-up around your cursor. Cheaper with several monitors."
         case .none:
             return "None: cheapest, but YoClicky can't see your screen or point at things."
         }
@@ -896,6 +907,7 @@ struct SettingsView: View {
                     privacyLine("waveform", "Your voice is turned into text by Apple speech recognition, on this Mac when on-device is on.")
                     privacyLine("photo", "A screenshot (per Settings > AI > Screenshots) and your text go to Claude through Claude Code, using your Claude account.")
                     privacyLine("doc.text", "When you ask about the open document, its text is sent too (Settings > AI > Read open document).")
+                    privacyLine("text.cursor", "The app's name, its window title, text you've selected and the date go with your question (Settings > AI > App context).")
                     privacyLine("externaldrive", "Screenshots aren't saved. Settings, memories and the current conversation stay on this Mac only.")
                     privacyLine("eye.slash", "No analytics, no tracking, no YoClicky servers.")
                 }

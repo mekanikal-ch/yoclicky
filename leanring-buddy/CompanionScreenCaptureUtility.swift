@@ -24,11 +24,23 @@ struct CompanionScreenCapture {
 @MainActor
 enum CompanionScreenCaptureUtility {
 
+    /// JPEG quality: high enough that small text survives compression.
+    private static let jpegCompressionFactor = 0.85
+
+    /// Claude sees images as 28x28 pixel patches ("visual tokens").
+    private static let visualTokenPatchSize = 28
+
     /// Captures all connected displays as JPEG data, labeling each with
     /// whether the user's cursor is on that screen. This gives the AI
     /// full context across multiple monitors. `maxDimension` caps the long edge
-    /// in pixels (smaller = fewer image tokens); `onlyCursorScreen` skips other displays.
-    static func captureAllScreensAsJPEG(maxDimension: Int = 1280, onlyCursorScreen: Bool = false) async throws -> [CompanionScreenCapture] {
+    /// in pixels (smaller = fewer image tokens); `maxVisualTokens` caps the
+    /// image's token count so the model never downscales it (which would shift
+    /// pointing coordinates); `onlyCursorScreen` skips other displays.
+    static func captureAllScreensAsJPEG(
+        maxDimension: Int = 1280,
+        maxVisualTokens: Int = 1568,
+        onlyCursorScreen: Bool = false
+    ) async throws -> [CompanionScreenCapture] {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
         guard !content.displays.isEmpty else {
@@ -83,14 +95,14 @@ enum CompanionScreenCaptureUtility {
             let filter = SCContentFilter(display: display, excludingWindows: ownAppWindows)
 
             let configuration = SCStreamConfiguration()
-            let aspectRatio = CGFloat(display.width) / CGFloat(display.height)
-            if display.width >= display.height {
-                configuration.width = maxDimension
-                configuration.height = Int(CGFloat(maxDimension) / aspectRatio)
-            } else {
-                configuration.height = maxDimension
-                configuration.width = Int(CGFloat(maxDimension) * aspectRatio)
-            }
+            let screenshotSize = screenshotPixelSize(
+                displayWidth: display.width,
+                displayHeight: display.height,
+                maxLongEdge: maxDimension,
+                maxVisualTokens: maxVisualTokens
+            )
+            configuration.width = screenshotSize.width
+            configuration.height = screenshotSize.height
 
             let cgImage = try await SCScreenshotManager.captureImage(
                 contentFilter: filter,
@@ -98,7 +110,7 @@ enum CompanionScreenCaptureUtility {
             )
 
             guard let jpegData = NSBitmapImageRep(cgImage: cgImage)
-                    .representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else {
+                    .representation(using: .jpeg, properties: [.compressionFactor: jpegCompressionFactor]) else {
                 continue
             }
 
@@ -129,5 +141,64 @@ enum CompanionScreenCaptureUtility {
         }
 
         return capturedScreens
+    }
+
+    /// The largest screenshot size with the display's aspect ratio whose long
+    /// edge is at most `maxLongEdge` and whose visual-token count fits `maxVisualTokens`.
+    static func screenshotPixelSize(displayWidth: Int, displayHeight: Int, maxLongEdge: Int, maxVisualTokens: Int) -> (width: Int, height: Int) {
+        let aspectRatio = CGFloat(displayWidth) / CGFloat(displayHeight)
+        var longEdge = maxLongEdge
+        while true {
+            let width = displayWidth >= displayHeight ? longEdge : Int(CGFloat(longEdge) * aspectRatio)
+            let height = displayWidth >= displayHeight ? Int(CGFloat(longEdge) / aspectRatio) : longEdge
+            let visualTokens = Int(ceil(Double(width) / Double(visualTokenPatchSize)))
+                * Int(ceil(Double(height) / Double(visualTokenPatchSize)))
+            if visualTokens <= maxVisualTokens || longEdge <= 512 {
+                return (width, height)
+            }
+            longEdge -= 32
+        }
+    }
+
+    /// Size of the close-up around the cursor, in screen points.
+    private static let cursorCloseUpSizeInPoints = CGSize(width: 560, height: 360)
+
+    /// Captures the area around the mouse cursor at 2x (Retina) sharpness, so
+    /// small text the user is looking at stays readable even though the full
+    /// screenshot is downscaled. Nil if the cursor's display can't be found.
+    static func captureCursorCloseUpAsJPEG() async throws -> Data? {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        let mouseLocation = NSEvent.mouseLocation
+
+        guard let cursorScreen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }),
+              let cursorDisplayID = cursorScreen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+              let cursorDisplay = content.displays.first(where: { $0.displayID == cursorDisplayID }) else {
+            return nil
+        }
+
+        let ownBundleIdentifier = Bundle.main.bundleIdentifier
+        let ownAppWindows = content.windows.filter { window in
+            window.owningApplication?.bundleIdentifier == ownBundleIdentifier
+        }
+        let filter = SCContentFilter(display: cursorDisplay, excludingWindows: ownAppWindows)
+
+        // sourceRect is in the display's own point space with a top-left origin,
+        // while the mouse location is global AppKit (bottom-left origin).
+        let screenFrame = cursorScreen.frame
+        let cursorXInDisplay = mouseLocation.x - screenFrame.minX
+        let cursorYInDisplay = screenFrame.maxY - mouseLocation.y
+        let closeUpWidth = min(cursorCloseUpSizeInPoints.width, screenFrame.width)
+        let closeUpHeight = min(cursorCloseUpSizeInPoints.height, screenFrame.height)
+        let closeUpOriginX = min(max(0, cursorXInDisplay - closeUpWidth / 2), screenFrame.width - closeUpWidth)
+        let closeUpOriginY = min(max(0, cursorYInDisplay - closeUpHeight / 2), screenFrame.height - closeUpHeight)
+
+        let configuration = SCStreamConfiguration()
+        configuration.sourceRect = CGRect(x: closeUpOriginX, y: closeUpOriginY, width: closeUpWidth, height: closeUpHeight)
+        configuration.width = Int(closeUpWidth * 2)
+        configuration.height = Int(closeUpHeight * 2)
+
+        let cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+        return NSBitmapImageRep(cgImage: cgImage)
+            .representation(using: .jpeg, properties: [.compressionFactor: jpegCompressionFactor])
     }
 }

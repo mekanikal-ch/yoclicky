@@ -300,6 +300,7 @@ extension ClickySettings {
     static let historyLengthKey = "conversationHistoryLength"
     static let documentReadingKey = "readOpenDocument"
     static let memoryEnabledKey = "memoryEnabled"
+    static let appContextEnabledKey = "sendAppContext"
 
     static var documentReadingEnabled: Bool {
         UserDefaults.standard.object(forKey: documentReadingKey) as? Bool ?? true
@@ -307,6 +308,11 @@ extension ClickySettings {
 
     static var memoryEnabled: Bool {
         UserDefaults.standard.object(forKey: memoryEnabledKey) as? Bool ?? true
+    }
+
+    /// Send the app's window title and any selected text with each question.
+    static var appContextEnabled: Bool {
+        UserDefaults.standard.object(forKey: appContextEnabledKey) as? Bool ?? true
     }
 
     /// AVSpeechUtterance rate. 0.5 is Apple's default, but it made voices like
@@ -352,7 +358,7 @@ extension ClickySettings {
         cursorColorKey, pushToTalkShortcutKey, doubleTapKeyKey, DS.Glass.windowOpacityKey,
         languageKey, ttsVoiceIdentifierKey, speechRateKey, speakRepliesKey, onDeviceRecognitionKey,
         soundsEnabledKey, customInstructionsKey, screenshotModeKey, historyLengthKey,
-        dictationShortcutKey, documentReadingKey, memoryEnabledKey,
+        dictationShortcutKey, documentReadingKey, memoryEnabledKey, appContextEnabledKey,
         "isCavemanMode", "selectedClaudeModel", AIProviderSettings.selectedProviderKey, "isClickyCursorEnabled"
     ]
 

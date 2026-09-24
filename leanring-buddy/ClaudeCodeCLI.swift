@@ -102,8 +102,8 @@ final class ClaudeCodeProcess {
 
     /// - Parameter isSpare: spares start at lower CPU priority so their startup
     ///   never competes with speech playback or animations.
-    init(executablePath: String, model: String, systemPrompt: String, isSpare: Bool = false) throws {
-        configurationKey = Self.configurationKey(model: model, systemPrompt: systemPrompt)
+    init(executablePath: String, model: String, effort: String, systemPrompt: String, isSpare: Bool = false) throws {
+        configurationKey = Self.configurationKey(model: model, effort: effort, systemPrompt: systemPrompt)
 
         process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
@@ -114,6 +114,7 @@ final class ClaudeCodeProcess {
             "--verbose",
             "--include-partial-messages",
             "--model", model,
+            "--effort", effort,
             "--system-prompt", systemPrompt,
             // Pure chat: no tools, no MCP servers, no user/project settings or
             // hooks, and don't save these sessions to disk.
@@ -141,8 +142,8 @@ final class ClaudeCodeProcess {
         try process.run()
     }
 
-    static func configurationKey(model: String, systemPrompt: String) -> String {
-        "\(model)\n\(systemPrompt)"
+    static func configurationKey(model: String, effort: String, systemPrompt: String) -> String {
+        "\(model)\n\(effort)\n\(systemPrompt)"
     }
 
     func terminate() {
@@ -150,61 +151,88 @@ final class ClaudeCodeProcess {
     }
 }
 
-/// Keeps one pre-started `claude` process ready for the next request.
+/// Keeps pre-started `claude` processes ready for the next request, one per
+/// model + effort + prompt combination (with the "Auto" model that's one for
+/// Sonnet and one for Opus).
 final class ClaudeCodeProcessPool {
     static let shared = ClaudeCodeProcessPool()
 
     /// Spares older than this are replaced, in case the CLI's state went stale.
     private static let maxSpareAge: TimeInterval = 15 * 60
+    /// Each waiting process holds some memory, so keep only a couple.
+    private static let maxSpareCount = 2
 
     private let lock = NSLock()
-    private var spareProcess: ClaudeCodeProcess?
+    private var spareProcesses: [ClaudeCodeProcess] = []
 
-    /// Returns the waiting spare if it matches this model + prompt, otherwise
-    /// launches a fresh process. The caller refills the spare with `prewarm`
+    /// Returns a waiting spare matching this model + effort + prompt, otherwise
+    /// launches a fresh process. The caller refills spares with `prewarm`
     /// once it's idle (starting one mid-answer made speech stutter).
-    func takeProcess(executablePath: String, model: String, systemPrompt: String) throws -> ClaudeCodeProcess {
-        let wantedKey = ClaudeCodeProcess.configurationKey(model: model, systemPrompt: systemPrompt)
+    func takeProcess(executablePath: String, model: String, effort: String, systemPrompt: String) throws -> ClaudeCodeProcess {
+        let wantedKey = ClaudeCodeProcess.configurationKey(model: model, effort: effort, systemPrompt: systemPrompt)
 
         lock.lock()
-        let candidate = spareProcess
-        spareProcess = nil
+        let matchingIndex = spareProcesses.firstIndex { $0.configurationKey == wantedKey }
+        let candidate = matchingIndex.map { spareProcesses.remove(at: $0) }
         lock.unlock()
 
-        let processForRequest: ClaudeCodeProcess
         if let candidate,
-           candidate.configurationKey == wantedKey,
            candidate.process.isRunning,
            Date().timeIntervalSince(candidate.launchedAt) < Self.maxSpareAge {
-            print("⚡️ Claude Code: using pre-started process")
-            processForRequest = candidate
-        } else {
-            candidate?.terminate()
-            processForRequest = try ClaudeCodeProcess(executablePath: executablePath, model: model, systemPrompt: systemPrompt)
+            print("⚡️ Claude Code: using pre-started process (\(model), effort \(effort))")
+            return candidate
         }
-
-        return processForRequest
+        candidate?.terminate()
+        return try ClaudeCodeProcess(executablePath: executablePath, model: model, effort: effort, systemPrompt: systemPrompt)
     }
 
-    /// Starts a spare process in the background, replacing any existing one.
-    func prewarm(executablePath: String, model: String, systemPrompt: String) {
+    /// Starts spare processes in the background for these configurations,
+    /// replacing any other spares.
+    func prewarm(executablePath: String, configurations: [(model: String, effort: String)], systemPrompt: String) {
+        let wantedConfigurations = Array(configurations.prefix(Self.maxSpareCount))
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
-            let newSpare = try? ClaudeCodeProcess(executablePath: executablePath, model: model, systemPrompt: systemPrompt, isSpare: true)
+            let wantedKeys = wantedConfigurations.map {
+                ClaudeCodeProcess.configurationKey(model: $0.model, effort: $0.effort, systemPrompt: systemPrompt)
+            }
+
+            // Keep fresh spares that are still wanted, stop the rest.
             self.lock.lock()
-            let replacedSpare = self.spareProcess
-            self.spareProcess = newSpare
+            let (keptSpares, unwantedSpares) = self.spareProcesses.reduce(into: ([ClaudeCodeProcess](), [ClaudeCodeProcess]())) { result, spare in
+                let isStillUseful = wantedKeys.contains(spare.configurationKey)
+                    && spare.process.isRunning
+                    && Date().timeIntervalSince(spare.launchedAt) < Self.maxSpareAge
+                if isStillUseful { result.0.append(spare) } else { result.1.append(spare) }
+            }
+            self.spareProcesses = keptSpares
             self.lock.unlock()
-            replacedSpare?.terminate()
+            unwantedSpares.forEach { $0.terminate() }
+
+            for (configuration, wantedKey) in zip(wantedConfigurations, wantedKeys) {
+                self.lock.lock()
+                let alreadyHasSpare = self.spareProcesses.contains { $0.configurationKey == wantedKey }
+                self.lock.unlock()
+                guard !alreadyHasSpare,
+                      let newSpare = try? ClaudeCodeProcess(
+                        executablePath: executablePath,
+                        model: configuration.model,
+                        effort: configuration.effort,
+                        systemPrompt: systemPrompt,
+                        isSpare: true
+                      ) else { continue }
+                self.lock.lock()
+                self.spareProcesses.append(newSpare)
+                self.lock.unlock()
+            }
         }
     }
 
     func shutdown() {
         lock.lock()
-        let spareToStop = spareProcess
-        spareProcess = nil
+        let sparesToStop = spareProcesses
+        spareProcesses = []
         lock.unlock()
-        spareToStop?.terminate()
+        sparesToStop.forEach { $0.terminate() }
     }
 }
 
@@ -213,6 +241,8 @@ final class ClaudeCodeProcessPool {
 /// Answers a screenshot + question through the Claude Code CLI (see AIProviderClient).
 class ClaudeCodeCLI {
     var model: String
+    /// Claude Code `--effort` level (low, medium, high, xhigh, max).
+    var effort: String
     /// Whether to take requests from (and refill) the shared warm process pool.
     /// Off for one-off calls like the connection test.
     var usesWarmProcessPool = true
@@ -220,17 +250,23 @@ class ClaudeCodeCLI {
     /// A request fails if the CLI produces no output for this long.
     static let inactivityTimeoutSeconds = 60
 
-    init(model: String = "sonnet") {
+    init(model: String = "sonnet", effort: String = "high") {
         self.model = model
+        self.effort = effort
     }
 
-    /// Maps the app's stored model IDs (e.g. "claude-sonnet-4-6") to CLI aliases
-    /// so the CLI always uses the latest model of that family.
-    var cliModelAlias: String {
-        let lowercasedModel = model.lowercased()
+    /// Maps a stored model ID (an alias like "opus", or an older full ID like
+    /// "claude-sonnet-4-6") to a CLI alias, so the CLI always uses the latest
+    /// model of that family. "auto" is resolved by ResponseRouter before this.
+    static func modelAlias(for modelID: String) -> String {
+        let lowercasedModel = modelID.lowercased()
         if lowercasedModel.contains("opus") { return "opus" }
         if lowercasedModel.contains("haiku") { return "haiku" }
         return "sonnet"
+    }
+
+    var cliModelAlias: String {
+        Self.modelAlias(for: model)
     }
 
     /// Finds the `claude` binary. GUI apps don't inherit the shell PATH, so we
@@ -250,12 +286,18 @@ class ClaudeCodeCLI {
         return candidatePaths.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    /// Starts a spare process for this model + prompt so the next request is fast.
+    /// Starts a spare process for this model + effort + prompt so the next request is fast.
     func prewarm(systemPrompt: String) {
-        guard let claudeExecutablePath = Self.locateClaudeExecutable() else { return }
+        Self.prewarm(configurations: [(model: cliModelAlias, effort: effort)], systemPrompt: systemPrompt)
+    }
+
+    /// Starts spare processes for several model + effort combinations at once
+    /// (the "Auto" model can use either Sonnet or Opus).
+    static func prewarm(configurations: [(model: String, effort: String)], systemPrompt: String) {
+        guard let claudeExecutablePath = locateClaudeExecutable() else { return }
         ClaudeCodeProcessPool.shared.prewarm(
             executablePath: claudeExecutablePath,
-            model: cliModelAlias,
+            configurations: configurations,
             systemPrompt: systemPrompt
         )
     }
@@ -285,7 +327,7 @@ class ClaudeCodeCLI {
 
         let inputData = try makeInputData(images: images, conversationHistory: conversationHistory, userPrompt: userPrompt)
         let payloadMB = Double(inputData.count) / 1_048_576.0
-        print("🌐 Claude Code CLI request: \(String(format: "%.1f", payloadMB))MB, \(images.count) image(s), model \(cliModelAlias)")
+        print("🌐 Claude Code CLI request: \(String(format: "%.1f", payloadMB))MB, \(images.count) image(s), model \(cliModelAlias), effort \(effort)")
 
         var attemptNumber = 1
         while true {
@@ -296,12 +338,14 @@ class ClaudeCodeCLI {
                     claudeProcess = try ClaudeCodeProcessPool.shared.takeProcess(
                         executablePath: claudeExecutablePath,
                         model: cliModelAlias,
+                        effort: effort,
                         systemPrompt: systemPrompt
                     )
                 } else {
                     claudeProcess = try ClaudeCodeProcess(
                         executablePath: claudeExecutablePath,
                         model: cliModelAlias,
+                        effort: effort,
                         systemPrompt: systemPrompt
                     )
                 }

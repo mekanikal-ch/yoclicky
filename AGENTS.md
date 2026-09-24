@@ -11,11 +11,13 @@ There is no server: no API keys, no proxy, no analytics. Everything runs on the 
 ## Architecture
 
 - **Framework**: SwiftUI with AppKit bridging (`NSPanel`/`NSWindow` via `NSHostingView`) for the menu bar panel, overlay, chat and settings windows
-- **AI**: `ClaudeCodeCLI` runs `claude -p` with stream-json input/output, no tools, no settings/MCP, no session persistence. A spare process is pre-started (`ClaudeCodeProcessPool`) once speech has finished, so requests skip CLI startup. 60s inactivity timeout, one retry for transient errors, classified errors (`ClaudeCodeError`)
+- **AI**: `ClaudeCodeCLI` runs `claude -p` with stream-json input/output, `--model <alias>` (`haiku`/`sonnet`/`opus`, always the newest of each family) and `--effort`, no tools, no settings/MCP, no session persistence. Up to two spare processes (one per model + effort) are pre-started (`ClaudeCodeProcessPool`) once speech has finished, so requests skip CLI startup. 60s inactivity timeout, one retry for transient errors, classified errors (`ClaudeCodeError`)
+- **Routing**: `ResponseRouter` picks model, effort and screenshot size per question. "Auto" (default) uses Sonnet for everyday questions and Opus for math, numbers, code and "why" questions (Opus was far more reliable at mental arithmetic), with `xhigh` effort when the user asks for depth or about the open document
 - **Providers**: `AIProvider` lists Claude (working) and other AIs marked "coming soon"; new ones implement `AIProviderClient`
 - **Speech-to-text**: Apple `SFSpeechRecognizer` (`AppleSpeechTranscriptionProvider`), on-device by default
 - **Text-to-speech**: `SystemTTSClient` renders the whole reply with `AVSpeechSynthesizer.write` and plays it through `AVAudioEngine` (one utterance, short silent lead-in, default rate 0.44)
-- **Screen capture**: ScreenCaptureKit, multi-monitor; YoClicky's own windows are excluded
+- **Screen capture**: ScreenCaptureKit, multi-monitor; YoClicky's own windows are excluded. Screenshots are sized to the model's image tier (1920 px for Sonnet/Opus, 1280 for Haiku) and kept under its visual-token limit, since a server-side downscale would shift pointing coordinates. A 2x close-up around the cursor is added for reading small text (never used for coordinates)
+- **Context**: `ScreenContextReader` adds the frontmost app, window title, selected text (Accessibility) and the date/time to each question
 - **Pointing**: Claude appends `[POINT:x,y:label:screenN]`; `CompanionManager.parsePointingCoordinates` maps it to screen coordinates
 - **Memory**: Claude marks lasting facts with `[REMEMBER: ...]`; `MemoryStore` saves them to `~/Library/Application Support/YoClicky/memories.json`
 - **Open document**: `OpenDocumentReader` reads the file shown in the frontmost app's window (Accessibility `AXDocument`) when the question is about it
@@ -31,6 +33,8 @@ There is no server: no API keys, no proxy, no analytics. Everything runs on the 
 | `CompanionManager.swift` | Central state: shortcuts, dictation, screenshot → Claude → TTS pipeline, pointing, text chat, prompts |
 | `ClaudeCodeCLI.swift` | Claude Code CLI client, warm process pool, errors, diagnostics |
 | `AIProvider.swift` | Provider list, `AIProviderClient` protocol, per-provider model settings |
+| `ResponseRouter.swift` | Per-question model, effort and screenshot size (the "Auto" model) |
+| `ScreenContextReader.swift` | App name, window title, selected text and date sent with each question |
 | `ClickySettings.swift` | All user preferences (shortcuts, language, voice, screenshots, memory…) and sounds |
 | `SettingsWindow.swift` | Settings window (General, AI, Voice, Appearance, Shortcuts, Privacy) and shortcut recorder |
 | `CompanionPanelView.swift` | Menu bar panel: permissions, onboarding copy, AI/model/style pickers |

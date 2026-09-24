@@ -242,6 +242,7 @@ final class CompanionManager: ObservableObject {
         bindAudioPowerLevel()
         bindShortcutTransitions()
         frontmostApplicationTracker.start()
+        observeWakeAndDisplayChanges()
         prewarmAIClient()
 
         // If the user already completed onboarding AND all permissions are
@@ -455,7 +456,7 @@ final class CompanionManager: ObservableObject {
                     // Only do this when no response is in flight, otherwise
                     // the brief idle gap between recording and processing
                     // would prematurely hide the overlay.
-                    if self.currentResponseTask == nil {
+                    if !self.isResponseInFlight {
                         self.scheduleTransientHideIfNeeded()
                     }
                 }
@@ -738,6 +739,12 @@ final class CompanionManager: ObservableObject {
         }
 
         currentResponseTask = Task {
+            // An interrupted older request finishing late mustn't clear the newer one's flag.
+            let responseIdentifier = UUID()
+            inFlightResponseIdentifier = responseIdentifier
+            defer {
+                if inFlightResponseIdentifier == responseIdentifier { inFlightResponseIdentifier = nil }
+            }
             // Stay in processing (spinner) state — no streaming text displayed
             voiceState = .processing
 
@@ -962,6 +969,59 @@ final class CompanionManager: ObservableObject {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard !Task.isCancelled, voiceState == .idle else { return }
             prewarmAIClient()
+        }
+    }
+
+    /// True while a question is being answered (from capture to the end of the
+    /// reply), so the idle gap between recording and processing doesn't hide
+    /// the transient cursor. `currentResponseTask` can't tell: it's never
+    /// reset to nil, which left the cursor stuck on screen after dictation.
+    private var inFlightResponseIdentifier: UUID?
+    private var isResponseInFlight: Bool { inFlightResponseIdentifier != nil }
+
+    private var wakeAndDisplayObservers: [NSObjectProtocol] = []
+
+    /// After sleep, screen lock or a display change, put the cursor back in the
+    /// state the user chose: hidden if "Show cursor" is off (a transient
+    /// appearance mustn't survive closing the lid), and rebuilt on the current
+    /// screens if it's on.
+    private func observeWakeAndDisplayChanges() {
+        let workspaceNotificationCenter = NSWorkspace.shared.notificationCenter
+        let workspaceNotifications: [Notification.Name] = [
+            NSWorkspace.didWakeNotification,
+            NSWorkspace.screensDidWakeNotification,
+            NSWorkspace.sessionDidBecomeActiveNotification
+        ]
+        for notificationName in workspaceNotifications {
+            wakeAndDisplayObservers.append(workspaceNotificationCenter.addObserver(
+                forName: notificationName, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.restoreChosenCursorVisibility() }
+            })
+        }
+        wakeAndDisplayObservers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.restoreChosenCursorVisibility() }
+        })
+    }
+
+    private func restoreChosenCursorVisibility() {
+        // Never interrupt an interaction in progress; it hides itself when done.
+        guard voiceState == .idle, !isResponseInFlight, !ttsClient.isPlaying, !isOnboardingTourRunning else { return }
+
+        if !isClickyCursorEnabled {
+            guard isOverlayVisible else { return }
+            transientHideTask?.cancel()
+            transientHideTask = nil
+            overlayWindowManager.hideOverlay()
+            isOverlayVisible = false
+            print("🙈 Cursor: hidden again after wake/display change (Show cursor is off)")
+        } else if hasCompletedOnboarding && allPermissionsGranted {
+            // Recreate the per-screen windows so they match the current displays.
+            overlayWindowManager.hasShownOverlayBefore = true
+            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
+            isOverlayVisible = true
         }
     }
 
